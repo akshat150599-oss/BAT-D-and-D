@@ -4,26 +4,25 @@ BAT Demurrage & Detention (D&D) Analyzer
 Standalone Streamlit app for BAT ocean shipment D&D cost analysis.
 
 Calculation Logic (from D&D PM):
-  Demurrage = [(Gate Out Full from POD - Discharge at POD) - Free Dem Days] × Tiered Rate
-  Detention = [(Container Empty Return - Gate Out Full from POD) - Free Det Days] × Tiered Rate
+  Demurrage = [(Gate Out Full from POD - Discharge at POD) - Free Dem Days] x Tiered Rate
+  Detention = [(Container Empty Return - Gate Out Full from POD) - Free Det Days] x Tiered Rate
 
 No CER handling:
-  CANCELLED  → shipment excluded from D&D entirely
-  ACTIVE     → detention accumulates to today's date (analysis run time)
-  COMPLETED  → detention end = SHIPMENT_MODIFIED_DATE
+  CANCELLED  -> shipment excluded from D&D entirely
+  ACTIVE     -> detention accumulates to today's date (analysis run time)
+  COMPLETED  -> detention end = SHIPMENT_MODIFIED_DATE
 
 Combined Free Days: Demurrage consumes from pool first, detention gets remainder.
 
-Run: streamlit run bat_dd_analyzer.py
+Run: streamlit run streamlit_app.py
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import altair as alt
 from datetime import datetime
+from io import BytesIO
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -36,69 +35,28 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
+# ALTAIR THEME
+# ─────────────────────────────────────────────
+DEM_COLOR = "#f5a623"
+DET_COLOR = "#7b61ff"
+TOTAL_COLOR = "#00d4aa"
+ALERT_COLOR = "#ff5c5c"
+
+# ─────────────────────────────────────────────
 # CUSTOM CSS
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-    
     .block-container { padding-top: 1.5rem; max-width: 1200px; }
-    
-    .kpi-card {
-        background: linear-gradient(135deg, #1a1d28 0%, #141720 100%);
-        border: 1px solid #2a2d3a;
-        border-radius: 10px;
-        padding: 18px 20px;
-        text-align: center;
-    }
-    .kpi-label {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        color: #8b8fa4;
-        margin-bottom: 4px;
-        font-weight: 600;
-    }
-    .kpi-value {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 28px;
-        font-weight: 700;
-        letter-spacing: -1px;
-    }
-    .kpi-sub { font-size: 12px; color: #5a5e72; margin-top: 2px; }
-    .dem-color { color: #f5a623; }
-    .det-color { color: #7b61ff; }
-    .total-color { color: #00d4aa; }
-    .alert-color { color: #ff5c5c; }
-    .blue-color { color: #5b9aff; }
-    
-    .logic-block {
-        background: #141720;
-        border: 1px solid #2a2d3a;
-        border-radius: 8px;
-        padding: 16px 20px;
-        margin-bottom: 12px;
-    }
-    .logic-block h4 { color: #00d4aa; margin-bottom: 8px; }
-    .logic-block code {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 13px;
-        color: #8b8fa4;
-        line-height: 2;
-    }
-    
     div[data-testid="stMetric"] {
-        background: #1a1d28;
-        border: 1px solid #2a2d3a;
-        border-radius: 10px;
-        padding: 12px 16px;
+        background: #1a1d28; border: 1px solid #2a2d3a;
+        border-radius: 10px; padding: 12px 16px;
     }
+    div[data-testid="stMetric"] label { color: #8b8fa4 !important; font-size: 11px !important; text-transform: uppercase; letter-spacing: 0.8px; }
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 26px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# HARDCODED BAT CONTRACTS (2026)
-# ─────────────────────────────────────────────
 BAT_CONTRACTS = [
     {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"INMAA","combinedFreeDays":None},
     {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"NGTIN","combinedFreeDays":None},
@@ -392,44 +350,10 @@ def process_shipments(df):
 # ─────────────────────────────────────────────
 # PLOTLY THEME
 # ─────────────────────────────────────────────
-PLOT_LAYOUT = dict(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="DM Sans, sans-serif", color="#e8eaf0", size=12),
-    margin=dict(l=20, r=20, t=40, b=20),
-    xaxis=dict(gridcolor="rgba(255,255,255,0.05)", zerolinecolor="rgba(255,255,255,0.05)"),
-    yaxis=dict(gridcolor="rgba(255,255,255,0.05)", zerolinecolor="rgba(255,255,255,0.05)"),
-    legend=dict(bgcolor="rgba(0,0,0,0)"),
-)
-DEM_COLOR = "#f5a623"
-DET_COLOR = "#7b61ff"
-TOTAL_COLOR = "#00d4aa"
-ALERT_COLOR = "#ff5c5c"
-
 
 # ─────────────────────────────────────────────
 # STREAMLIT APP
 # ─────────────────────────────────────────────
-def render_kpi(label, value, color_class=""):
-    st.markdown(
-        f"""<div class="kpi-card">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value {color_class}">{value}</div>
-        </div>""",
-        unsafe_allow_html=True,
-    )
-
-
-def render_kpi_with_sub(label, value, sub, color_class=""):
-    st.markdown(
-        f"""<div class="kpi-card">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value {color_class}">{value}</div>
-            <div class="kpi-sub">{sub}</div>
-        </div>""",
-        unsafe_allow_html=True,
-    )
-
 
 # ── Sidebar ──
 with st.sidebar:
@@ -443,36 +367,22 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Contracts:** BAT 2026 (hardcoded)")
     st.markdown(f"**Contract rows:** {len(BAT_CONTRACTS)}")
-    st.markdown(
-        "**Terminals:** USORF, HRRJK, NGAPP, NGTIN"
-    )
-    st.markdown(
-        "**Carriers:** CMDU, HLCU, MSCU, ONEY, OOLU + KHNN (FFW)"
-    )
+    st.markdown("**Terminals:** USORF, HRRJK, NGAPP, NGTIN")
+    st.markdown("**Carriers:** CMDU, HLCU, MSCU, ONEY, OOLU + KHNN (FFW)")
 
 if uploaded_file is None:
     st.markdown("## 🚢 BAT Demurrage & Detention Analyzer")
     st.markdown("---")
     st.info("Upload a D&D shipment CSV from the sidebar to get started.")
-    st.markdown(
-        """
-        **Expected CSV columns (milestones):**
-        
-        `CEP` → `CGI` → `CLL` → `VDL` → `VAD` → `CDD` → `CGO` → `CER`
-        
-        Plus: `SHIPMENT_ID`, `CONTAINER_NUMBER`, `CARRIER_SCAC`, `POL_LOCODE`, `POD_LOCODE`, `REPORTING_DATE`
-        """
-    )
-    st.markdown("---")
-    st.markdown("**Calculation Logic:**")
+    st.markdown("**Expected milestone columns:** `CEP → CGI → CLL → VDL → VAD → CDD → CGO → CER`")
     st.code(
-        "Demurrage = [(CGO − CDD) − Free Days] × Tiered Rate\n"
-        "Detention  = [(CER − CGO) − Free Days] × Tiered Rate\n"
+        "Demurrage = [(CGO - CDD) - Free Days] x Tiered Rate\n"
+        "Detention  = [(CER - CGO) - Free Days] x Tiered Rate\n"
         "\n"
         "No CER handling:\n"
-        "  CANCELLED  → excluded from analysis\n"
-        "  ACTIVE     → detention accumulates to today's date\n"
-        "  COMPLETED  → detention end = SHIPMENT_MODIFIED_DATE",
+        "  CANCELLED  -> excluded from analysis\n"
+        "  ACTIVE     -> detention accumulates to today's date\n"
+        "  COMPLETED  -> detention end = SHIPMENT_MODIFIED_DATE",
         language=None,
     )
     st.stop()
@@ -483,7 +393,7 @@ with st.spinner("Processing shipments against BAT contracts..."):
     rdf, total_shipments, cancelled_count = process_shipments(raw_df)
 
 if len(rdf) == 0:
-    st.error("No shipments matched BAT contracts. Check that your CSV has POD_LOCODE, CARRIER_SCAC, POL_LOCODE columns.")
+    st.error("No shipments matched BAT contracts. Check POD_LOCODE, CARRIER_SCAC, POL_LOCODE columns.")
     st.stop()
 
 # ── Sidebar filters ──
@@ -494,79 +404,151 @@ with st.sidebar:
     sel_carriers = st.multiselect("Carrier", carriers, default=carriers)
     pods = sorted(rdf["POD_LOCODE"].unique())
     sel_pods = st.multiselect("POD Terminal", pods, default=pods)
-    show_zero = st.checkbox("Include shipments with $0 charges", value=True)
+    show_zero = st.checkbox("Include $0 charge shipments", value=True)
 
-# Apply filters
 fdf = rdf[rdf["CARRIER_SCAC"].isin(sel_carriers) & rdf["POD_LOCODE"].isin(sel_pods)]
 if not show_zero:
     fdf = fdf[fdf["TOTAL_DD_COST"] > 0]
 
+# ─────────────────────────────────────────────
+# HELPER: Clean download file
+# ─────────────────────────────────────────────
+def build_download_df(data):
+    """Build a clean, easy-to-understand download DataFrame."""
+    dl = data.copy()
+    # Format dates
+    for col in ["CDD", "CGO", "CER"]:
+        if col in dl.columns:
+            dl[col] = pd.to_datetime(dl[col], errors="coerce").dt.strftime("%Y-%m-%d %H:%M").fillna("")
+
+    # Rename columns to human-readable names
+    rename_map = {
+        "SHIPMENT_ID": "Shipment ID",
+        "CONTAINER_NUMBER": "Container",
+        "CARRIER_SCAC": "Carrier SCAC",
+        "CARRIER_NAME": "Carrier Name",
+        "POL_LOCODE": "Port of Loading",
+        "POD_LOCODE": "Port of Discharge",
+        "LANE": "Lane",
+        "SUBSCRIPTION_STATUS": "Subscription Status",
+        "CDD": "Discharge Date (CDD)",
+        "CGO": "Gate Out Date (CGO)",
+        "CER": "Empty Return Date (CER)",
+        "DEM_TOTAL_DAYS": "Demurrage Total Days",
+        "DEM_CHARGEABLE_DAYS": "Demurrage Chargeable Days",
+        "DEM_COST": "Demurrage Cost (USD)",
+        "DET_TOTAL_DAYS": "Detention Total Days",
+        "DET_CHARGEABLE_DAYS": "Detention Chargeable Days",
+        "DET_COST": "Detention Cost (USD)",
+        "TOTAL_DD_COST": "Total D&D Cost (USD)",
+        "CONTRACT_TYPE": "Free Days Type",
+        "FREE_DEM_DAYS": "Free Demurrage Days",
+        "FREE_DET_DAYS": "Free Detention Days",
+        "COMBINED_FREE_DAYS": "Combined Free Days",
+        "DET_ACCUMULATING": "Detention Still Accumulating",
+        "DET_END_SOURCE": "Detention End Date Source",
+    }
+    # Only rename columns that exist
+    dl = dl.rename(columns={k: v for k, v in rename_map.items() if k in dl.columns})
+
+    # Drop internal columns
+    drop_cols = [c for c in ["POL", "POD", "LIFECYCLE_STATUS"] if c in dl.columns]
+    dl = dl.drop(columns=drop_cols, errors="ignore")
+
+    # Reorder: identifiers first, then events, then charges
+    desired_order = [
+        "Shipment ID", "Container", "Carrier SCAC", "Carrier Name",
+        "Lane", "Port of Loading", "Port of Discharge", "Subscription Status",
+        "Discharge Date (CDD)", "Gate Out Date (CGO)", "Empty Return Date (CER)",
+        "Free Days Type", "Free Demurrage Days", "Free Detention Days", "Combined Free Days",
+        "Demurrage Total Days", "Demurrage Chargeable Days", "Demurrage Cost (USD)",
+        "Detention Total Days", "Detention Chargeable Days", "Detention Cost (USD)",
+        "Total D&D Cost (USD)",
+        "Detention Still Accumulating", "Detention End Date Source",
+    ]
+    existing = [c for c in desired_order if c in dl.columns]
+    remaining = [c for c in dl.columns if c not in existing]
+    dl = dl[existing + remaining]
+
+    return dl
+
+
 # ── TABS ──
-tab_overview, tab_carrier, tab_port, tab_ships, tab_dist, tab_logic = st.tabs(
-    ["📊 Overview", "🚛 Carriers", "🏗️ Ports & Lanes", "📦 Shipments", "📈 Distribution", "⚙️ Logic"]
+tab_overview, tab_carrier, tab_port, tab_ships, tab_download, tab_logic = st.tabs(
+    ["📊 Overview", "🚛 Carriers", "🏗️ Ports & Lanes", "📦 Shipments", "📥 Download", "⚙️ Logic"]
 )
 
-# ─────────── TAB: OVERVIEW ───────────
+# ═══════════════════════════════════════════════
+# TAB: OVERVIEW
+# ═══════════════════════════════════════════════
 with tab_overview:
     c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        render_kpi_with_sub("Total D&D Cost", f"${fdf['TOTAL_DD_COST'].sum():,.0f}", f"{len(fdf)} matched of {total_shipments:,}", "total-color")
-    with c2:
-        render_kpi_with_sub("Demurrage", f"${fdf['DEM_COST'].sum():,.0f}", f"{(fdf['DEM_COST']>0).sum()} shipments incurred", "dem-color")
-    with c3:
-        render_kpi_with_sub("Detention", f"${fdf['DET_COST'].sum():,.0f}", f"{(fdf['DET_COST']>0).sum()} shipments incurred", "det-color")
-    with c4:
-        render_kpi_with_sub("Accumulating", f"{fdf['DET_ACCUMULATING'].sum()}", "ACTIVE, no CER → using today", "alert-color")
-
-    st.markdown("")
+    c1.metric("Total D&D Cost", f"${fdf['TOTAL_DD_COST'].sum():,.0f}", f"{len(fdf)} matched of {total_shipments:,}")
+    c2.metric("Demurrage", f"${fdf['DEM_COST'].sum():,.0f}", f"{(fdf['DEM_COST']>0).sum()} shipments")
+    c3.metric("Detention", f"${fdf['DET_COST'].sum():,.0f}", f"{(fdf['DET_COST']>0).sum()} shipments")
+    c4.metric("⚠️ Accumulating", f"{fdf['DET_ACCUMULATING'].sum()}", "ACTIVE, no CER")
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        render_kpi("Avg Dem Days (chargeable)", f"{fdf.loc[fdf['DEM_COST']>0, 'DEM_CHARGEABLE_DAYS'].mean():.1f}d" if (fdf['DEM_COST']>0).any() else "—")
-    with c2:
-        render_kpi("Avg Det Days (chargeable)", f"{fdf.loc[fdf['DET_COST']>0, 'DET_CHARGEABLE_DAYS'].mean():.1f}d" if (fdf['DET_COST']>0).any() else "—")
-    with c3:
-        render_kpi("Within Free Days", f"{(fdf['TOTAL_DD_COST']==0).sum()}")
-    with c4:
-        render_kpi("Max Single Shipment", f"${fdf['TOTAL_DD_COST'].max():,.0f}")
+    avg_dem = fdf.loc[fdf["DEM_COST"] > 0, "DEM_CHARGEABLE_DAYS"].mean()
+    avg_det = fdf.loc[fdf["DET_COST"] > 0, "DET_CHARGEABLE_DAYS"].mean()
+    c1.metric("Avg Dem Days", f"{avg_dem:.1f}d" if not np.isnan(avg_dem) else "—")
+    c2.metric("Avg Det Days", f"{avg_det:.1f}d" if not np.isnan(avg_det) else "—")
+    c3.metric("Within Free Days", f"{(fdf['TOTAL_DD_COST'] == 0).sum()}")
+    c4.metric("Max Single Shipment", f"${fdf['TOTAL_DD_COST'].max():,.0f}")
 
     if cancelled_count > 0:
         st.caption(f"ℹ️ {cancelled_count} cancelled shipments excluded from analysis.")
 
     st.markdown("---")
 
-    # Cost by Carrier
+    # ── Cost by Carrier (stacked bar) ──
     carrier_agg = (
         fdf.groupby("CARRIER_SCAC")
-        .agg(DEM=("DEM_COST", "sum"), DET=("DET_COST", "sum"), Count=("SHIPMENT_ID", "count"))
+        .agg(Demurrage=("DEM_COST", "sum"), Detention=("DET_COST", "sum"))
         .reset_index()
-        .sort_values("DEM", ascending=False)
     )
-    carrier_agg["Total"] = carrier_agg["DEM"] + carrier_agg["DET"]
-    carrier_agg = carrier_agg.sort_values("Total", ascending=True)
+    carrier_melt = carrier_agg.melt(id_vars="CARRIER_SCAC", var_name="Type", value_name="Cost")
+    carrier_melt["Cost"] = carrier_melt["Cost"].round(0)
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(y=carrier_agg["CARRIER_SCAC"], x=carrier_agg["DEM"], name="Demurrage", orientation="h", marker_color=DEM_COLOR))
-    fig.add_trace(go.Bar(y=carrier_agg["CARRIER_SCAC"], x=carrier_agg["DET"], name="Detention", orientation="h", marker_color=DET_COLOR))
-    fig.update_layout(**PLOT_LAYOUT, title="D&D Cost by Carrier", barmode="stack", height=300)
-    st.plotly_chart(fig, use_container_width=True)
+    chart_carrier = (
+        alt.Chart(carrier_melt)
+        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        .encode(
+            y=alt.Y("CARRIER_SCAC:N", sort="-x", title="Carrier"),
+            x=alt.X("Cost:Q", title="Cost (USD)"),
+            color=alt.Color("Type:N", scale=alt.Scale(domain=["Demurrage", "Detention"], range=[DEM_COLOR, DET_COLOR])),
+            tooltip=["CARRIER_SCAC", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+        )
+        .properties(title="D&D Cost by Carrier", height=250)
+    )
+    st.altair_chart(chart_carrier, use_container_width=True)
 
-    # Cost by POD
+    # ── Cost by POD (stacked bar) ──
     pod_agg = (
         fdf.groupby("POD_LOCODE")
-        .agg(DEM=("DEM_COST", "sum"), DET=("DET_COST", "sum"))
+        .agg(Demurrage=("DEM_COST", "sum"), Detention=("DET_COST", "sum"))
         .reset_index()
     )
-    pod_agg["Total"] = pod_agg["DEM"] + pod_agg["DET"]
-    pod_agg = pod_agg.sort_values("Total", ascending=True)
+    pod_melt = pod_agg.melt(id_vars="POD_LOCODE", var_name="Type", value_name="Cost")
+    pod_melt["Cost"] = pod_melt["Cost"].round(0)
 
-    fig2 = go.Figure()
-    fig2.add_trace(go.Bar(y=pod_agg["POD_LOCODE"], x=pod_agg["DEM"], name="Demurrage", orientation="h", marker_color=DEM_COLOR))
-    fig2.add_trace(go.Bar(y=pod_agg["POD_LOCODE"], x=pod_agg["DET"], name="Detention", orientation="h", marker_color=DET_COLOR))
-    fig2.update_layout(**PLOT_LAYOUT, title="D&D Cost by POD Terminal", barmode="stack", height=280)
-    st.plotly_chart(fig2, use_container_width=True)
+    chart_pod = (
+        alt.Chart(pod_melt)
+        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        .encode(
+            y=alt.Y("POD_LOCODE:N", sort="-x", title="POD Terminal"),
+            x=alt.X("Cost:Q", title="Cost (USD)"),
+            color=alt.Color("Type:N", scale=alt.Scale(domain=["Demurrage", "Detention"], range=[DEM_COLOR, DET_COLOR])),
+            tooltip=["POD_LOCODE", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+        )
+        .properties(title="D&D Cost by POD Terminal", height=220)
+    )
+    st.altair_chart(chart_pod, use_container_width=True)
 
-# ─────────── TAB: CARRIERS ───────────
+
+# ═══════════════════════════════════════════════
+# TAB: CARRIERS
+# ═══════════════════════════════════════════════
 with tab_carrier:
     carrier_detail = (
         fdf.groupby(["CARRIER_SCAC", "CARRIER_NAME"])
@@ -584,12 +566,13 @@ with tab_carrier:
     carrier_detail["Total_Cost"] = carrier_detail["Dem_Cost"] + carrier_detail["Det_Cost"]
     carrier_detail = carrier_detail.sort_values("Total_Cost", ascending=False)
 
+    st.markdown("#### Carrier Summary")
     st.dataframe(
-        carrier_detail.style.format(
-            {"Dem_Cost": "${:,.0f}", "Det_Cost": "${:,.0f}", "Total_Cost": "${:,.0f}", "Avg_Dem_Days": "{:.1f}", "Avg_Det_Days": "{:.1f}"}
-        ),
-        use_container_width=True,
-        hide_index=True,
+        carrier_detail.style.format({
+            "Dem_Cost": "${:,.0f}", "Det_Cost": "${:,.0f}", "Total_Cost": "${:,.0f}",
+            "Avg_Dem_Days": "{:.1f}", "Avg_Det_Days": "{:.1f}",
+        }),
+        use_container_width=True, hide_index=True,
     )
 
     st.markdown("---")
@@ -602,21 +585,37 @@ with tab_carrier:
     cp["Total"] = cp["Dem"] + cp["Det"]
     cp = cp[cp["Total"] > 0].sort_values("Total", ascending=False)
 
-    fig = px.treemap(
-        cp, path=["CARRIER_SCAC", "POD_LOCODE"], values="Total",
-        color="Total", color_continuous_scale=["#1a1d28", DEM_COLOR, ALERT_COLOR],
-        title="Carrier × POD Cost Treemap",
-    )
-    fig.update_layout(**PLOT_LAYOUT, height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    # Heatmap
+    if len(cp) > 0:
+        heat = (
+            alt.Chart(cp)
+            .mark_rect(cornerRadius=4)
+            .encode(
+                x=alt.X("POD_LOCODE:N", title="POD"),
+                y=alt.Y("CARRIER_SCAC:N", title="Carrier"),
+                color=alt.Color("Total:Q", scale=alt.Scale(scheme="oranges"), title="Total D&D"),
+                tooltip=["CARRIER_SCAC", "POD_LOCODE", "Ships",
+                         alt.Tooltip("Dem:Q", format="$,.0f"),
+                         alt.Tooltip("Det:Q", format="$,.0f"),
+                         alt.Tooltip("Total:Q", format="$,.0f")],
+            )
+            .properties(title="Cost Heatmap: Carrier × POD", height=250)
+        )
+        text = heat.mark_text(fontSize=11, fontWeight="bold").encode(
+            text=alt.Text("Total:Q", format="$,.0f"),
+            color=alt.condition(alt.datum.Total > cp["Total"].median(), alt.value("white"), alt.value("black")),
+        )
+        st.altair_chart(heat + text, use_container_width=True)
 
     st.dataframe(
         cp.style.format({"Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}),
-        use_container_width=True,
-        hide_index=True,
+        use_container_width=True, hide_index=True,
     )
 
-# ─────────── TAB: PORTS & LANES ───────────
+
+# ═══════════════════════════════════════════════
+# TAB: PORTS & LANES
+# ═══════════════════════════════════════════════
 with tab_port:
     col1, col2 = st.columns(2)
     with col1:
@@ -630,17 +629,23 @@ with tab_port:
         pod_sum = pod_sum.sort_values("Total", ascending=False)
         st.dataframe(
             pod_sum.style.format({"Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}),
-            use_container_width=True,
-            hide_index=True,
+            use_container_width=True, hide_index=True,
         )
-
     with col2:
         st.markdown("#### Dem vs Det Split by POD")
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=pod_sum["POD_LOCODE"], y=pod_sum["Dem"], name="Demurrage", marker_color=DEM_COLOR))
-        fig.add_trace(go.Bar(x=pod_sum["POD_LOCODE"], y=pod_sum["Det"], name="Detention", marker_color=DET_COLOR))
-        fig.update_layout(**PLOT_LAYOUT, barmode="stack", height=350)
-        st.plotly_chart(fig, use_container_width=True)
+        pod_melt2 = pod_sum.melt(id_vars="POD_LOCODE", value_vars=["Dem", "Det"], var_name="Type", value_name="Cost")
+        ch = (
+            alt.Chart(pod_melt2)
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+            .encode(
+                x=alt.X("POD_LOCODE:N", title="POD"),
+                y=alt.Y("Cost:Q", title="Cost (USD)", stack=True),
+                color=alt.Color("Type:N", scale=alt.Scale(domain=["Dem", "Det"], range=[DEM_COLOR, DET_COLOR])),
+                tooltip=["POD_LOCODE", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(ch, use_container_width=True)
 
     st.markdown("---")
     st.markdown("#### Top 20 Lanes by Total D&D Cost")
@@ -649,8 +654,7 @@ with tab_port:
         .agg(
             Ships=("SHIPMENT_ID", "count"),
             Carriers=("CARRIER_SCAC", lambda x: ", ".join(sorted(x.unique()))),
-            Dem=("DEM_COST", "sum"),
-            Det=("DET_COST", "sum"),
+            Dem=("DEM_COST", "sum"), Det=("DET_COST", "sum"),
             Avg_Dem_Days=("DEM_CHARGEABLE_DAYS", lambda x: round(x[x > 0].mean(), 1) if (x > 0).any() else 0),
         )
         .reset_index()
@@ -659,16 +663,18 @@ with tab_port:
     lane_agg = lane_agg.sort_values("Total", ascending=False).head(20)
     st.dataframe(
         lane_agg.style.format({"Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}),
-        use_container_width=True,
-        hide_index=True,
+        use_container_width=True, hide_index=True,
     )
 
-# ─────────── TAB: SHIPMENT EXPLORER ───────────
+
+# ═══════════════════════════════════════════════
+# TAB: SHIPMENT EXPLORER
+# ═══════════════════════════════════════════════
 with tab_ships:
     st.markdown("#### Shipment-Level D&D Detail")
-    st.markdown(f"*Showing {len(fdf)} matched shipments. Use sidebar filters to narrow.*")
+    st.caption(f"Showing {len(fdf)} matched shipments. Use sidebar filters to narrow.")
 
-    sort_col = st.selectbox("Sort by", ["TOTAL_DD_COST", "DEM_COST", "DET_COST", "DEM_CHARGEABLE_DAYS", "DET_CHARGEABLE_DAYS"], index=0)
+    sort_col = st.selectbox("Sort by", ["TOTAL_DD_COST", "DEM_COST", "DET_COST", "DEM_CHARGEABLE_DAYS", "DET_CHARGEABLE_DAYS"])
     top_n = st.slider("Show top N", 10, min(500, len(fdf)), 50)
 
     display_cols = [
@@ -680,11 +686,9 @@ with tab_ships:
     ]
     show_df = fdf[display_cols].sort_values(sort_col, ascending=False).head(top_n).copy()
 
-    # Format dates for display
     for dc in ["CDD", "CGO", "CER"]:
-        show_df[dc] = show_df[dc].dt.strftime("%Y-%m-%d %H:%M").fillna("—")
+        show_df[dc] = pd.to_datetime(show_df[dc], errors="coerce").dt.strftime("%Y-%m-%d").fillna("—")
 
-    # Status column: shows what date was used for detention end
     show_df["DET_STATUS"] = show_df.apply(
         lambda r: "⚠️ Active → Today" if r["DET_ACCUMULATING"] else
                   ("📅 Completed → Modified" if r["DET_END_SOURCE"] == "MODIFIED_DATE" else "✓ CER"),
@@ -693,168 +697,198 @@ with tab_ships:
     show_df = show_df.drop(columns=["DET_ACCUMULATING", "DET_END_SOURCE"])
 
     st.dataframe(
-        show_df.style.format(
-            {"DEM_COST": "${:,.2f}", "DET_COST": "${:,.2f}", "TOTAL_DD_COST": "${:,.2f}"}
-        ),
-        use_container_width=True,
-        hide_index=True,
-        height=600,
+        show_df.style.format({"DEM_COST": "${:,.2f}", "DET_COST": "${:,.2f}", "TOTAL_DD_COST": "${:,.2f}"}),
+        use_container_width=True, hide_index=True, height=600,
     )
 
-    # Download
-    csv_out = fdf.to_csv(index=False)
-    st.download_button("📥 Download Full Results CSV", csv_out, "bat_dd_results.csv", "text/csv")
-
-# ─────────── TAB: DISTRIBUTION ───────────
-with tab_dist:
+    # ── Distribution charts ──
+    st.markdown("---")
     col1, col2 = st.columns(2)
+
     with col1:
-        dem_data = fdf.loc[fdf["DEM_COST"] > 0, "DEM_CHARGEABLE_DAYS"]
+        dem_data = fdf.loc[fdf["DEM_COST"] > 0, ["DEM_CHARGEABLE_DAYS"]].copy()
         if len(dem_data) > 0:
-            fig = px.histogram(dem_data, nbins=20, title="Demurrage Chargeable Days", color_discrete_sequence=[DEM_COLOR])
-            fig.update_layout(**PLOT_LAYOUT, height=300, showlegend=False)
-            fig.update_xaxes(title="Days")
-            fig.update_yaxes(title="Shipments")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No demurrage charges to display.")
+            ch = alt.Chart(dem_data).mark_bar(color=DEM_COLOR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+                x=alt.X("DEM_CHARGEABLE_DAYS:Q", bin=alt.Bin(maxbins=20), title="Chargeable Days"),
+                y=alt.Y("count()", title="Shipments"),
+            ).properties(title="Demurrage Days Distribution", height=220)
+            st.altair_chart(ch, use_container_width=True)
 
     with col2:
-        det_data = fdf.loc[fdf["DET_COST"] > 0, "DET_CHARGEABLE_DAYS"]
+        det_data = fdf.loc[fdf["DET_COST"] > 0, ["DET_CHARGEABLE_DAYS"]].copy()
         if len(det_data) > 0:
-            fig = px.histogram(det_data, nbins=20, title="Detention Chargeable Days", color_discrete_sequence=[DET_COLOR])
-            fig.update_layout(**PLOT_LAYOUT, height=300, showlegend=False)
-            fig.update_xaxes(title="Days")
-            fig.update_yaxes(title="Shipments")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No detention charges to display.")
+            ch = alt.Chart(det_data).mark_bar(color=DET_COLOR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+                x=alt.X("DET_CHARGEABLE_DAYS:Q", bin=alt.Bin(maxbins=20), title="Chargeable Days"),
+                y=alt.Y("count()", title="Shipments"),
+            ).properties(title="Detention Days Distribution", height=220)
+            st.altair_chart(ch, use_container_width=True)
 
-    cost_data = fdf.loc[fdf["TOTAL_DD_COST"] > 0, "TOTAL_DD_COST"]
-    if len(cost_data) > 0:
-        fig = px.histogram(cost_data, nbins=30, title="Total D&D Cost per Shipment (USD)", color_discrete_sequence=[TOTAL_COLOR])
-        fig.update_layout(**PLOT_LAYOUT, height=300, showlegend=False)
-        fig.update_xaxes(title="Cost (USD)")
-        fig.update_yaxes(title="Shipments")
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Scatter: Dem days vs Det days
+    # Scatter
     scatter_df = fdf[(fdf["DEM_CHARGEABLE_DAYS"] > 0) | (fdf["DET_CHARGEABLE_DAYS"] > 0)].copy()
     if len(scatter_df) > 0:
-        fig = px.scatter(
-            scatter_df,
-            x="DEM_CHARGEABLE_DAYS",
-            y="DET_CHARGEABLE_DAYS",
-            color="CARRIER_SCAC",
-            size="TOTAL_DD_COST",
-            hover_data=["CONTAINER_NUMBER", "LANE"],
-            title="Demurrage vs Detention Days (bubble = total cost)",
-            color_discrete_sequence=[DEM_COLOR, DET_COLOR, TOTAL_COLOR, ALERT_COLOR, "#5b9aff", "#ff9f43"],
+        ch = (
+            alt.Chart(scatter_df)
+            .mark_circle(opacity=0.7)
+            .encode(
+                x=alt.X("DEM_CHARGEABLE_DAYS:Q", title="Demurrage Days"),
+                y=alt.Y("DET_CHARGEABLE_DAYS:Q", title="Detention Days"),
+                size=alt.Size("TOTAL_DD_COST:Q", title="Total Cost", scale=alt.Scale(range=[30, 500])),
+                color=alt.Color("CARRIER_SCAC:N", title="Carrier"),
+                tooltip=["CONTAINER_NUMBER", "CARRIER_SCAC", "LANE",
+                         alt.Tooltip("DEM_CHARGEABLE_DAYS:Q", format=".1f"),
+                         alt.Tooltip("DET_CHARGEABLE_DAYS:Q", format=".1f"),
+                         alt.Tooltip("TOTAL_DD_COST:Q", format="$,.0f")],
+            )
+            .properties(title="Demurrage vs Detention (bubble = total cost)", height=350)
         )
-        fig.update_layout(**PLOT_LAYOUT, height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.altair_chart(ch, use_container_width=True)
 
-# ─────────── TAB: LOGIC ───────────
+
+# ═══════════════════════════════════════════════
+# TAB: DOWNLOAD
+# ═══════════════════════════════════════════════
+with tab_download:
+    st.markdown("#### 📥 Download Shipment-Level D&D Results")
+    st.markdown("Clean, easy-to-read file with human-friendly column names. Ready to share with stakeholders.")
+
+    dl_df = build_download_df(fdf)
+
+    st.markdown(f"**Rows:** {len(dl_df)} | **Columns:** {len(dl_df.columns)}")
+
+    # Preview
+    st.dataframe(dl_df.head(10), use_container_width=True, hide_index=True)
+
+    # CSV download
+    csv_bytes = dl_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Download as CSV",
+        data=csv_bytes,
+        file_name=f"BAT_DD_Results_{datetime.now().strftime('%Y-%m-%d')}.csv",
+        mime="text/csv",
+    )
+
+    # Excel download
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        dl_df.to_excel(writer, sheet_name="D&D Results", index=False)
+
+        # Also write a summary sheet
+        summary_data = {
+            "Metric": [
+                "Total Matched Shipments", "Cancelled Excluded",
+                "Total D&D Cost", "Total Demurrage", "Total Detention",
+                "Shipments with Dem Charges", "Shipments with Det Charges",
+                "Shipments Within Free Days", "Detention Accumulating (no CER)",
+                "Analysis Date",
+            ],
+            "Value": [
+                len(fdf), cancelled_count,
+                f"${fdf['TOTAL_DD_COST'].sum():,.2f}",
+                f"${fdf['DEM_COST'].sum():,.2f}",
+                f"${fdf['DET_COST'].sum():,.2f}",
+                (fdf["DEM_COST"] > 0).sum(),
+                (fdf["DET_COST"] > 0).sum(),
+                (fdf["TOTAL_DD_COST"] == 0).sum(),
+                fdf["DET_ACCUMULATING"].sum(),
+                datetime.now().strftime("%Y-%m-%d %H:%M"),
+            ],
+        }
+        pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
+
+        # Contract reference sheet
+        cdf = pd.DataFrame(BAT_CONTRACTS)
+        contract_cols = [
+            "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
+            "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
+            "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
+            "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
+            "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
+            "combinedFreeDays",
+        ]
+        cdf[contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
+
+    st.download_button(
+        label="📥 Download as Excel (3 sheets: Results + Summary + Contracts)",
+        data=buffer.getvalue(),
+        file_name=f"BAT_DD_Results_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    st.markdown("---")
+    st.markdown("**Download contains 3 sheets:**")
+    st.markdown("1. **D&D Results** — Every matched shipment with charges, dates, free days, and costs")
+    st.markdown("2. **Summary** — KPI snapshot (total costs, counts, analysis date)")
+    st.markdown("3. **Contracts** — BAT 2026 contract terms used for calculation")
+
+
+# ═══════════════════════════════════════════════
+# TAB: LOGIC
+# ═══════════════════════════════════════════════
 with tab_logic:
     st.markdown("### Calculation Logic")
-    st.markdown(
-        """
-        <div class="logic-block">
-            <h4>D&D Formulas</h4>
-            <code>
-                <span style="color:#f5a623">Demurrage</span> = [(Gate Out Full from POD − Discharge at POD) − Free Days] × Tiered Rate<br>
-                <span style="color:#7b61ff">Detention</span> &nbsp;= [(Container Empty Return − Gate Out Full from POD) − Free Days] × Tiered Rate
-            </code>
-        </div>
-        """,
-        unsafe_allow_html=True,
+
+    st.markdown("#### D&D Formulas")
+    st.code(
+        "Demurrage = [(Gate Out Full from POD - Discharge at POD) - Free Days] x Tiered Rate\n"
+        "Detention  = [(Container Empty Return - Gate Out Full from POD) - Free Days] x Tiered Rate",
+        language=None,
     )
 
-    st.markdown(
-        """
-        <div class="logic-block">
-            <h4>No CER Handling (Detention End Date)</h4>
-            <code>
-                SUBSCRIPTION_STATUS = <span style="color:#ff5c5c">CANCELLED</span> → Shipment excluded from D&D entirely<br>
-                SUBSCRIPTION_STATUS = <span style="color:#f5a623">ACTIVE</span> &nbsp;&nbsp;&nbsp;&nbsp;+ no CER → Detention accumulates to <b>today's date</b> (analysis run time)<br>
-                SUBSCRIPTION_STATUS = <span style="color:#00d4aa">COMPLETED</span> + no CER → Detention end = <b>SHIPMENT_MODIFIED_DATE</b>
-            </code>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown("#### No CER Handling")
+    st.code(
+        "SUBSCRIPTION_STATUS = CANCELLED  -> Shipment excluded from D&D entirely\n"
+        "SUBSCRIPTION_STATUS = ACTIVE     + no CER -> Detention accumulates to TODAY (analysis run time)\n"
+        "SUBSCRIPTION_STATUS = COMPLETED  + no CER -> Detention end = SHIPMENT_MODIFIED_DATE",
+        language=None,
     )
 
-    st.markdown(
-        """
-        <div class="logic-block">
-            <h4>Tiered Rate Structure</h4>
-            <code>
-                Days 1 to Tier1_days → Tier1_rate per day<br>
-                Days (Tier1+1) to (Tier1+Tier2) → Tier2_rate per day<br>
-                Beyond → Thereafter_rate per day
-            </code>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown("#### Tiered Rate Structure")
+    st.code(
+        "Days 1 to Tier1_days          -> Tier1_rate per day\n"
+        "Days (Tier1+1) to (Tier1+Tier2) -> Tier2_rate per day\n"
+        "Beyond                          -> Thereafter_rate per day",
+        language=None,
     )
 
-    st.markdown(
-        """
-        <div class="logic-block">
-            <h4>Combined Free Days</h4>
-            <code>
-                Demurrage eats from the combined pool first.<br>
-                Detention uses the remaining free days.<br>
-                Example: 21 combined free days, 18 dem days → 3 free det days left.
-            </code>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown("#### Combined Free Days")
+    st.code(
+        "Demurrage eats from the combined pool first.\n"
+        "Detention uses the remaining free days.\n"
+        "Example: 21 combined free days, 18 dem days -> 3 free det days left.",
+        language=None,
     )
 
-    st.markdown(
-        """
-        <div class="logic-block">
-            <h4>Contract Matching</h4>
-            <code>
-                Match Key = POD_LOCODE | CARRIER_SCAC | POL_LOCODE<br>
-                Fallback  = POD_LOCODE | FFW_SCAC (KHNN) | POL_LOCODE
-            </code>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown("#### Contract Matching")
+    st.code(
+        "Match Key = POD_LOCODE | CARRIER_SCAC | POL_LOCODE\n"
+        "Fallback  = POD_LOCODE | FFW_SCAC (KHNN) | POL_LOCODE",
+        language=None,
     )
 
-    st.markdown(
-        """
-        <div class="logic-block">
-            <h4>Milestone Chain (Input CSV)</h4>
-            <code>
-                CEP → CGI → CLL → VDL → VAD → CDD → CGO → CER<br>
-                ─────────────────────────────────────────────────<br>
-                CEP = Container Empty Pickup<br>
-                CGI = Container Gate In (at POL)<br>
-                CLL = Container Loaded on Vessel<br>
-                VDL = Vessel Departure from Load Port<br>
-                VAD = Vessel Arrival at Discharge Port<br>
-                CDD = Container Discharge at POD &nbsp;&nbsp;← <span style="color:#f5a623">Demurrage starts</span><br>
-                CGO = Gate Out Full from POD &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← <span style="color:#f5a623">Demurrage ends</span> / <span style="color:#7b61ff">Detention starts</span><br>
-                CER = Container Empty Return &nbsp;&nbsp;&nbsp;&nbsp;← <span style="color:#7b61ff">Detention ends</span><br>
-                <br>
-                If CER missing:<br>
-                &nbsp;&nbsp;CANCELLED → <span style="color:#ff5c5c">excluded entirely</span><br>
-                &nbsp;&nbsp;ACTIVE &nbsp;&nbsp;&nbsp;→ <span style="color:#f5a623">detention end = today (analysis run date)</span><br>
-                &nbsp;&nbsp;COMPLETED → <span style="color:#00d4aa">detention end = SHIPMENT_MODIFIED_DATE</span>
-            </code>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown("#### Milestone Chain")
+    st.code(
+        "CEP -> CGI -> CLL -> VDL -> VAD -> CDD -> CGO -> CER\n"
+        "─────────────────────────────────────────────────────\n"
+        "CEP = Container Empty Pickup\n"
+        "CGI = Container Gate In (at POL)\n"
+        "CLL = Container Loaded on Vessel\n"
+        "VDL = Vessel Departure from Load Port\n"
+        "VAD = Vessel Arrival at Discharge Port\n"
+        "CDD = Container Discharge at POD    <- Demurrage starts\n"
+        "CGO = Gate Out Full from POD         <- Demurrage ends / Detention starts\n"
+        "CER = Container Empty Return         <- Detention ends\n"
+        "\n"
+        "If CER missing:\n"
+        "  CANCELLED -> excluded entirely\n"
+        "  ACTIVE    -> detention end = today\n"
+        "  COMPLETED -> detention end = SHIPMENT_MODIFIED_DATE",
+        language=None,
     )
 
     st.markdown("---")
     st.markdown("#### Contract Table (Hardcoded)")
     cdf = pd.DataFrame(BAT_CONTRACTS)
-    display_contract_cols = [
+    contract_display_cols = [
         "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
         "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
         "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
@@ -862,4 +896,4 @@ with tab_logic:
         "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
         "combinedFreeDays",
     ]
-    st.dataframe(cdf[display_contract_cols], use_container_width=True, hide_index=True, height=400)
+    st.dataframe(cdf[contract_display_cols], use_container_width=True, hide_index=True, height=400)
