@@ -7,8 +7,10 @@ Calculation Logic (from D&D PM):
   Demurrage = [(Gate Out Full from POD - Discharge at POD) - Free Dem Days] x Tiered Rate
   Detention = [(Container Empty Return - Gate Out Full from POD) - Free Det Days] x Tiered Rate
 
-No CER handling:
+Exclusion rule (applies to ALL shipments):
   CANCELLED  -> shipment excluded from D&D entirely
+
+No CER handling (when CER is missing):
   ACTIVE     -> detention accumulates to today's date (analysis run time)
   COMPLETED  -> detention end = SHIPMENT_MODIFIED_DATE
 
@@ -191,9 +193,9 @@ def process_shipments(df):
       Detention  = (CER - CGO) - free days  →  tiered rate
     
     No CER handling:
-      - SUBSCRIPTION_STATUS = CANCELLED  →  exclude shipment entirely
-      - SUBSCRIPTION_STATUS = ACTIVE     →  detention accumulates to today's date
-      - SUBSCRIPTION_STATUS = COMPLETED  →  detention end = SHIPMENT_MODIFIED_DATE
+      - SUBSCRIPTION_STATUS = CANCELLED  →  exclude shipment entirely (all shipments)
+      - SUBSCRIPTION_STATUS = ACTIVE     + no CER →  detention accumulates to today's date
+      - SUBSCRIPTION_STATUS = COMPLETED  + no CER →  detention end = SHIPMENT_MODIFIED_DATE
     
     Combined Free Days: demurrage eats first, detention gets leftover.
     """
@@ -379,8 +381,10 @@ if uploaded_file is None:
         "Demurrage = [(CGO - CDD) - Free Days] x Tiered Rate\n"
         "Detention  = [(CER - CGO) - Free Days] x Tiered Rate\n"
         "\n"
+        "Exclusion rule:\n"
+        "  CANCELLED  -> excluded from analysis (all shipments)\n"
+        "\n"
         "No CER handling:\n"
-        "  CANCELLED  -> excluded from analysis\n"
         "  ACTIVE     -> detention accumulates to today's date\n"
         "  COMPLETED  -> detention end = SHIPMENT_MODIFIED_DATE",
         language=None,
@@ -834,11 +838,16 @@ with tab_logic:
         language=None,
     )
 
-    st.markdown("#### No CER Handling")
+    st.markdown("#### Exclusion Rule (all shipments)")
     st.code(
-        "SUBSCRIPTION_STATUS = CANCELLED  -> Shipment excluded from D&D entirely\n"
-        "SUBSCRIPTION_STATUS = ACTIVE     + no CER -> Detention accumulates to TODAY (analysis run time)\n"
-        "SUBSCRIPTION_STATUS = COMPLETED  + no CER -> Detention end = SHIPMENT_MODIFIED_DATE",
+        "SUBSCRIPTION_STATUS = CANCELLED  -> Shipment excluded from D&D entirely",
+        language=None,
+    )
+
+    st.markdown("#### No CER Handling (when CER is missing)")
+    st.code(
+        "SUBSCRIPTION_STATUS = ACTIVE    + no CER -> Detention accumulates to TODAY (analysis run time)\n"
+        "SUBSCRIPTION_STATUS = COMPLETED + no CER -> Detention end = SHIPMENT_MODIFIED_DATE",
         language=None,
     )
 
@@ -879,9 +888,10 @@ with tab_logic:
         "CER = Container Empty Return         <- Detention ends\n"
         "\n"
         "If CER missing:\n"
-        "  CANCELLED -> excluded entirely\n"
         "  ACTIVE    -> detention end = today\n"
-        "  COMPLETED -> detention end = SHIPMENT_MODIFIED_DATE",
+        "  COMPLETED -> detention end = SHIPMENT_MODIFIED_DATE\n"
+        "\n"
+        "CANCELLED shipments -> excluded from all calculations",
         language=None,
     )
 
