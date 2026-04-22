@@ -487,18 +487,42 @@ tab_overview, tab_carrier, tab_port, tab_ships, tab_download, tab_logic = st.tab
 # ═══════════════════════════════════════════════
 with tab_overview:
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total D&D Cost", f"${fdf['TOTAL_DD_COST'].sum():,.0f}", f"{len(fdf)} matched of {total_shipments:,}")
-    c2.metric("Demurrage", f"${fdf['DEM_COST'].sum():,.0f}", f"{(fdf['DEM_COST']>0).sum()} shipments")
-    c3.metric("Detention", f"${fdf['DET_COST'].sum():,.0f}", f"{(fdf['DET_COST']>0).sum()} shipments")
-    c4.metric("⚠️ Accumulating", f"{fdf['DET_ACCUMULATING'].sum()}", "ACTIVE, no CER")
+    c1.metric(
+        "Total D&D Cost", f"${fdf['TOTAL_DD_COST'].sum():,.0f}", f"{len(fdf)} matched of {total_shipments:,}",
+        help="Combined demurrage + detention charges across all matched shipments. Only shipments with a matching BAT contract (POD + Carrier + POL) are included.",
+    )
+    c2.metric(
+        "Demurrage", f"${fdf['DEM_COST'].sum():,.0f}", f"{(fdf['DEM_COST']>0).sum()} shipments",
+        help="Cost for containers sitting at the port terminal after discharge (CDD) and before gate out (CGO). Charges start after free days are used up.",
+    )
+    c3.metric(
+        "Detention", f"${fdf['DET_COST'].sum():,.0f}", f"{(fdf['DET_COST']>0).sum()} shipments",
+        help="Cost for containers held outside the port after gate out (CGO) and before empty return (CER). Charges start after remaining free days are used up.",
+    )
+    c4.metric(
+        "⚠️ Accumulating", f"{fdf['DET_ACCUMULATING'].sum()}", "ACTIVE, no CER",
+        help="Shipments where the container was gated out but no empty return (CER) event was received. These are still ACTIVE, so detention is calculated up to today's date and keeps growing.",
+    )
 
     c1, c2, c3, c4 = st.columns(4)
     avg_dem = fdf.loc[fdf["DEM_COST"] > 0, "DEM_CHARGEABLE_DAYS"].mean()
     avg_det = fdf.loc[fdf["DET_COST"] > 0, "DET_CHARGEABLE_DAYS"].mean()
-    c1.metric("Avg Dem Days", f"{avg_dem:.1f}d" if not np.isnan(avg_dem) else "—")
-    c2.metric("Avg Det Days", f"{avg_det:.1f}d" if not np.isnan(avg_det) else "—")
-    c3.metric("Within Free Days", f"{(fdf['TOTAL_DD_COST'] == 0).sum()}")
-    c4.metric("Max Single Shipment", f"${fdf['TOTAL_DD_COST'].max():,.0f}")
+    c1.metric(
+        "Avg Dem Days", f"{avg_dem:.1f}d" if not np.isnan(avg_dem) else "—",
+        help="Average number of chargeable demurrage days per shipment (only counting shipments that actually incurred demurrage). This is the time beyond free days that the container sat at the port terminal.",
+    )
+    c2.metric(
+        "Avg Det Days", f"{avg_det:.1f}d" if not np.isnan(avg_det) else "—",
+        help="Average number of chargeable detention days per shipment (only counting shipments that actually incurred detention). This is the time beyond free days that the container was held after gate out.",
+    )
+    c3.metric(
+        "Within Free Days", f"{(fdf['TOTAL_DD_COST'] == 0).sum()}",
+        help="Number of shipments where the total time (discharge to empty return) stayed within the contractual free days — so no D&D charges were incurred.",
+    )
+    c4.metric(
+        "Max Single Shipment", f"${fdf['TOTAL_DD_COST'].max():,.0f}",
+        help="The highest total D&D cost on a single shipment. Check the Shipments tab sorted by Total Cost to see which container this is.",
+    )
 
     if cancelled_count > 0:
         st.caption(f"ℹ️ {cancelled_count} cancelled shipments excluded from analysis.")
@@ -506,6 +530,7 @@ with tab_overview:
     st.markdown("---")
 
     # ── Cost by Carrier (stacked bar) ──
+    st.caption("💡 Which carriers are driving the most D&D cost? Orange = time at port (demurrage), purple = time after gate out (detention).")
     carrier_agg = (
         fdf.groupby("CARRIER_SCAC")
         .agg(Demurrage=("DEM_COST", "sum"), Detention=("DET_COST", "sum"))
@@ -528,6 +553,7 @@ with tab_overview:
     st.altair_chart(chart_carrier, use_container_width=True)
 
     # ── Cost by POD (stacked bar) ──
+    st.caption("💡 Which port terminals are the most expensive? High demurrage = slow customs/pickup. High detention = consignee holding containers.")
     pod_agg = (
         fdf.groupby("POD_LOCODE")
         .agg(Demurrage=("DEM_COST", "sum"), Detention=("DET_COST", "sum"))
@@ -771,52 +797,55 @@ with tab_download:
         mime="text/csv",
     )
 
-    # Excel download
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        dl_df.to_excel(writer, sheet_name="D&D Results", index=False)
+    # Excel download (with fallback if openpyxl not installed)
+    try:
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            dl_df.to_excel(writer, sheet_name="D&D Results", index=False)
 
-        # Also write a summary sheet
-        summary_data = {
-            "Metric": [
-                "Total Matched Shipments", "Cancelled Excluded",
-                "Total D&D Cost", "Total Demurrage", "Total Detention",
-                "Shipments with Dem Charges", "Shipments with Det Charges",
-                "Shipments Within Free Days", "Detention Accumulating (no CER)",
-                "Analysis Date",
-            ],
-            "Value": [
-                len(fdf), cancelled_count,
-                f"${fdf['TOTAL_DD_COST'].sum():,.2f}",
-                f"${fdf['DEM_COST'].sum():,.2f}",
-                f"${fdf['DET_COST'].sum():,.2f}",
-                (fdf["DEM_COST"] > 0).sum(),
-                (fdf["DET_COST"] > 0).sum(),
-                (fdf["TOTAL_DD_COST"] == 0).sum(),
-                fdf["DET_ACCUMULATING"].sum(),
-                datetime.now().strftime("%Y-%m-%d %H:%M"),
-            ],
-        }
-        pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
+            # Also write a summary sheet
+            summary_data = {
+                "Metric": [
+                    "Total Matched Shipments", "Cancelled Excluded",
+                    "Total D&D Cost", "Total Demurrage", "Total Detention",
+                    "Shipments with Dem Charges", "Shipments with Det Charges",
+                    "Shipments Within Free Days", "Detention Accumulating (no CER)",
+                    "Analysis Date",
+                ],
+                "Value": [
+                    len(fdf), cancelled_count,
+                    f"${fdf['TOTAL_DD_COST'].sum():,.2f}",
+                    f"${fdf['DEM_COST'].sum():,.2f}",
+                    f"${fdf['DET_COST'].sum():,.2f}",
+                    (fdf["DEM_COST"] > 0).sum(),
+                    (fdf["DET_COST"] > 0).sum(),
+                    (fdf["TOTAL_DD_COST"] == 0).sum(),
+                    fdf["DET_ACCUMULATING"].sum(),
+                    datetime.now().strftime("%Y-%m-%d %H:%M"),
+                ],
+            }
+            pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
 
-        # Contract reference sheet
-        cdf = pd.DataFrame(BAT_CONTRACTS)
-        contract_cols = [
-            "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
-            "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
-            "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
-            "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
-            "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
-            "combinedFreeDays",
-        ]
-        cdf[contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
+            # Contract reference sheet
+            cdf = pd.DataFrame(BAT_CONTRACTS)
+            contract_cols = [
+                "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
+                "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
+                "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
+                "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
+                "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
+                "combinedFreeDays",
+            ]
+            cdf[contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
 
-    st.download_button(
-        label="📥 Download as Excel (3 sheets: Results + Summary + Contracts)",
-        data=buffer.getvalue(),
-        file_name=f"BAT_DD_Results_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+        st.download_button(
+            label="📥 Download as Excel (3 sheets: Results + Summary + Contracts)",
+            data=buffer.getvalue(),
+            file_name=f"BAT_DD_Results_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except ImportError:
+        st.info("Excel download requires openpyxl. Add `openpyxl` to requirements.txt, or use the CSV download above.")
 
     st.markdown("---")
     st.markdown("**Download contains 3 sheets:**")
@@ -861,9 +890,19 @@ with tab_logic:
 
     st.markdown("#### Combined Free Days")
     st.code(
-        "Demurrage eats from the combined pool first.\n"
-        "Detention uses the remaining free days.\n"
-        "Example: 21 combined free days, 18 dem days -> 3 free det days left.",
+        "Combined free days are consumed continuously from discharge date.\n"
+        "DEM applies while container is in terminal (CDD to CGO).\n"
+        "DET applies after gate out (CGO to CER).\n"
+        "Charges apply only after free days are exhausted, based on location.\n"
+        "\n"
+        "Example 1: 21 combined free, 25 days at terminal\n"
+        "  DEM chargeable = 25 - 21 = 4 days (free pool exhausted at terminal)\n"
+        "  DET gets 0 remaining free → charges from day 1 after gate out\n"
+        "\n"
+        "Example 2: 21 combined free, 9 days at terminal, 15 days after gate out\n"
+        "  DEM chargeable = 0 (9 < 21, within free)\n"
+        "  Remaining free for DET = 21 - 9 = 12 days\n"
+        "  DET chargeable = 15 - 12 = 3 days",
         language=None,
     )
 
