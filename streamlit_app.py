@@ -49,85 +49,94 @@ ALERT_COLOR = "#ff5c5c"
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    .block-container { 
-        padding-top: 1.5rem; 
-        max-width: 1200px; 
+    .block-container {
+        padding-top: 1.5rem;
+        max-width: 1200px;
     }
 
-    /* FIX: Tabs fully visible */
+    /* ───────── FIX TAB VISIBILITY ───────── */
+
     div[data-testid="stTabs"] {
-        overflow: visible !important;
-    }
-
-    div[data-testid="stTabs"] > div {
-        overflow: visible !important;
+        margin-top: 0.5rem !important;
     }
 
     div[data-testid="stTabs"] div[role="tablist"] {
-        display: flex !important;
-        gap: 18px !important;
-        border-bottom: 1px solid #e6e6e6 !important;
-        padding-bottom: 10px !important;
+        min-height: 64px !important;
+        height: 64px !important;
+        padding-top: 8px !important;
+        padding-bottom: 14px !important;
         margin-bottom: 18px !important;
-        overflow-x: auto !important;
-        overflow-y: visible !important;
-        white-space: nowrap !important;
-        min-height: 52px !important;
+        border-bottom: 1px solid #2a2d3a !important;
+        overflow: visible !important;
+        gap: 26px !important;
     }
 
     div[data-testid="stTabs"] button[role="tab"] {
-        min-height: 46px !important;
-        height: auto !important;
-        padding: 10px 4px 12px 4px !important;
-        margin-bottom: -1px !important;
+        min-height: 48px !important;
+        height: 48px !important;
+        padding: 8px 8px 12px 8px !important;
+        margin: 0 !important;
         overflow: visible !important;
-        white-space: nowrap !important;
-        line-height: 1.4 !important;
-        color: #222222 !important;
-        font-weight: 700 !important;
-        font-size: 15px !important;
+        border-bottom: none !important;
+        background: transparent !important;
     }
 
     div[data-testid="stTabs"] button[role="tab"] p {
+        color: #cbd5e1 !important;
+        font-size: 15px !important;
+        font-weight: 800 !important;
+        line-height: 22px !important;
         margin: 0 !important;
         padding: 0 !important;
-        overflow: visible !important;
         white-space: nowrap !important;
-        line-height: 1.4 !important;
-        font-size: 15px !important;
-        font-weight: 700 !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"]:hover p {
+        color: #ffffff !important;
+    }
+
+    div[data-testid="stTabs"] button[aria-selected="true"] p {
+        color: #ff4b4b !important;
+        font-weight: 900 !important;
     }
 
     div[data-testid="stTabs"] button[aria-selected="true"] {
-        color: #ff4b4b !important;
-        border-bottom: 3px solid #ff4b4b !important;
+        border-bottom: 4px solid #ff4b4b !important;
     }
 
-    /* FIX: Metric readability */
+    /* Remove extra clipping from Streamlit wrappers */
+    div[data-testid="stTabs"] div {
+        overflow: visible !important;
+    }
+
+    /* ───────── METRIC CARD READABILITY ───────── */
+
     div[data-testid="stMetric"] {
         background: #111827;
         border: 1px solid #2a2d3a;
         border-radius: 10px;
-        padding: 12px 16px;
+        padding: 18px 20px;
     }
 
     div[data-testid="stMetric"] label {
         color: #ffffff !important;
-        font-size: 11px !important;
+        font-size: 13px !important;
         text-transform: uppercase;
         letter-spacing: 0.8px;
-        font-weight: 800 !important;
+        font-weight: 900 !important;
     }
 
     div[data-testid="stMetric"] [data-testid="stMetricValue"] {
         color: #ffffff !important;
-        font-size: 28px !important;
+        font-size: 34px !important;
         font-weight: 900 !important;
     }
 
     div[data-testid="stMetricDelta"] {
         color: #22c55e !important;
-        font-weight: 800 !important;
+        font-weight: 900 !important;
     }
 </style>
 """, unsafe_allow_html=True)
