@@ -54,29 +54,56 @@ st.markdown("""
         max-width: 1200px; 
     }
 
-    /* Fix tabs getting cut by horizontal line */
+    /* FIX: Tabs fully visible */
+    div[data-testid="stTabs"] {
+        overflow: visible !important;
+    }
+
+    div[data-testid="stTabs"] > div {
+        overflow: visible !important;
+    }
+
     div[data-testid="stTabs"] div[role="tablist"] {
-        border-bottom: 1px solid #e6e6e6;
-        padding-bottom: 0.35rem;
-        overflow: visible;
+        display: flex !important;
+        gap: 18px !important;
+        border-bottom: 1px solid #e6e6e6 !important;
+        padding-bottom: 10px !important;
+        margin-bottom: 18px !important;
+        overflow-x: auto !important;
+        overflow-y: visible !important;
+        white-space: nowrap !important;
+        min-height: 52px !important;
     }
 
     div[data-testid="stTabs"] button[role="tab"] {
-        padding-top: 0.6rem;
-        padding-bottom: 0.6rem;
-        min-height: 42px;
-        overflow: visible;
+        min-height: 46px !important;
+        height: auto !important;
+        padding: 10px 4px 12px 4px !important;
+        margin-bottom: -1px !important;
+        overflow: visible !important;
+        white-space: nowrap !important;
+        line-height: 1.4 !important;
         color: #222222 !important;
-        font-weight: 600;
+        font-weight: 700 !important;
+        font-size: 15px !important;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"] p {
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+        white-space: nowrap !important;
+        line-height: 1.4 !important;
+        font-size: 15px !important;
+        font-weight: 700 !important;
     }
 
     div[data-testid="stTabs"] button[aria-selected="true"] {
         color: #ff4b4b !important;
-        font-weight: 700;
-        border-bottom: 2px solid #ff4b4b;
+        border-bottom: 3px solid #ff4b4b !important;
     }
 
-    /* Metric card styling */
+    /* FIX: Metric readability */
     div[data-testid="stMetric"] {
         background: #111827;
         border: 1px solid #2a2d3a;
