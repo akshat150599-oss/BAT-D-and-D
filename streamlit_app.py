@@ -49,13 +49,59 @@ ALERT_COLOR = "#ff5c5c"
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem; max-width: 1200px; }
-    div[data-testid="stMetric"] {
-        background: #1a1d28; border: 1px solid #2a2d3a;
-        border-radius: 10px; padding: 12px 16px;
+    .block-container { 
+        padding-top: 1.5rem; 
+        max-width: 1200px; 
     }
-    div[data-testid="stMetric"] label { color: #8b8fa4 !important; font-size: 11px !important; text-transform: uppercase; letter-spacing: 0.8px; }
-    div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 26px !important; }
+
+    /* Fix tabs getting cut by horizontal line */
+    div[data-testid="stTabs"] div[role="tablist"] {
+        border-bottom: 1px solid #e6e6e6;
+        padding-bottom: 0.35rem;
+        overflow: visible;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"] {
+        padding-top: 0.6rem;
+        padding-bottom: 0.6rem;
+        min-height: 42px;
+        overflow: visible;
+        color: #222222 !important;
+        font-weight: 600;
+    }
+
+    div[data-testid="stTabs"] button[aria-selected="true"] {
+        color: #ff4b4b !important;
+        font-weight: 700;
+        border-bottom: 2px solid #ff4b4b;
+    }
+
+    /* Metric card styling */
+    div[data-testid="stMetric"] {
+        background: #111827;
+        border: 1px solid #2a2d3a;
+        border-radius: 10px;
+        padding: 12px 16px;
+    }
+
+    div[data-testid="stMetric"] label {
+        color: #ffffff !important;
+        font-size: 11px !important;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        font-weight: 800 !important;
+    }
+
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: #ffffff !important;
+        font-size: 28px !important;
+        font-weight: 900 !important;
+    }
+
+    div[data-testid="stMetricDelta"] {
+        color: #22c55e !important;
+        font-weight: 800 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
