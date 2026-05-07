@@ -141,70 +141,61 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-BAT_CONTRACTS = [
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"INMAA","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"NGTIN","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"NGAPP","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"BGVAR","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"TRIZM","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"TRALI","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"NGLEK","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"NGLKK","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"CLSAI","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":3,"firstDetentionRate":215.0,"secondDetentionDays":3,"secondDetentionRate":265.0,"thereafterDetentionRate":315.0,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"CLSAI","combinedFreeDays":6.0},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":3,"firstDetentionRate":215.0,"secondDetentionDays":3,"secondDetentionRate":265.0,"thereafterDetentionRate":315.0,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"IDSUB","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":4,"firstDemurrageRate":195.0,"secondDemurrageDays":4,"secondDemurrageRate":225.0,"thereafterDemurrageRate":260.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":195.0,"secondDetentionDays":4,"secondDetentionRate":225.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":None,"ffwScac":"KHNN","portOfLoadingLocode":"GTPBR","combinedFreeDays":14.0},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":4,"firstDemurrageRate":195.0,"secondDemurrageDays":4,"secondDemurrageRate":225.0,"thereafterDemurrageRate":260.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":195.0,"secondDetentionDays":4,"secondDetentionRate":225.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":None,"ffwScac":"KHNN","portOfLoadingLocode":"MXZLO","combinedFreeDays":20.0},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":3.0,"firstDemurrageDays":4,"firstDemurrageRate":195.0,"secondDemurrageDays":4,"secondDemurrageRate":225.0,"thereafterDemurrageRate":260.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":4,"firstDetentionRate":195.0,"secondDetentionDays":4,"secondDetentionRate":225.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":None,"ffwScac":"KHNN","portOfLoadingLocode":"CLSAI","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":5,"firstDetentionRate":165.0,"secondDetentionDays":1,"secondDetentionRate":120.0,"thereafterDetentionRate":120.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"BRRIG","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":5,"firstDetentionRate":165.0,"secondDetentionDays":1,"secondDetentionRate":120.0,"thereafterDetentionRate":120.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"MXATM","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":5,"firstDetentionRate":165.0,"secondDetentionDays":1,"secondDetentionRate":120.0,"thereafterDetentionRate":120.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"BRRIG","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":5,"firstDetentionRate":165.0,"secondDetentionDays":1,"secondDetentionRate":120.0,"thereafterDetentionRate":120.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"GTPBR","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":5,"firstDetentionRate":165.0,"secondDetentionDays":1,"secondDetentionRate":120.0,"thereafterDetentionRate":120.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"MXZLO","combinedFreeDays":None},
-    {"terminalIdentifier":"USORF","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":4.0,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":4.0,"firstDetentionDays":5,"firstDetentionRate":165.0,"secondDetentionDays":1,"secondDetentionRate":120.0,"thereafterDetentionRate":120.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"GTPBR","combinedFreeDays":None},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"CNHUA","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"BDCGP","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"BRRIG","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"ARBUE","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"BRNVT","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"BRIOA","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":4,"firstDemurrageRate":17.25,"secondDemurrageDays":3,"secondDemurrageRate":28.75,"thereafterDemurrageRate":34.5,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":17.25,"secondDetentionDays":3,"secondDetentionRate":28.75,"thereafterDetentionRate":34.5,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"ARBUE","combinedFreeDays":10.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":4,"firstDemurrageRate":17.25,"secondDemurrageDays":3,"secondDemurrageRate":28.75,"thereafterDemurrageRate":34.5,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":17.25,"secondDetentionDays":3,"secondDetentionRate":28.75,"thereafterDetentionRate":34.5,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"IDSUB","combinedFreeDays":10.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":4,"firstDemurrageRate":17.25,"secondDemurrageDays":3,"secondDemurrageRate":28.75,"thereafterDemurrageRate":34.5,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":17.25,"secondDetentionDays":3,"secondDetentionRate":28.75,"thereafterDetentionRate":34.5,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"BRNVT","combinedFreeDays":10.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":4,"firstDemurrageRate":195.0,"secondDemurrageDays":4,"secondDemurrageRate":225.0,"thereafterDemurrageRate":260.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":195.0,"secondDetentionDays":4,"secondDetentionRate":225.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":None,"ffwScac":"KHNN","portOfLoadingLocode":"TRSSX","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":4,"firstDemurrageRate":195.0,"secondDemurrageDays":4,"secondDemurrageRate":225.0,"thereafterDemurrageRate":260.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":195.0,"secondDetentionDays":4,"secondDetentionRate":225.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":None,"ffwScac":"KHNN","portOfLoadingLocode":"TRALI","combinedFreeDays":21.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"MZBEW","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"USORF","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"ZADUR","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"TRIZM","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"INMAA","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"ITNAP","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"INENR","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"INKAT","combinedFreeDays":20.0},
-    {"terminalIdentifier":"HRRJK","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":1,"firstDemurrageRate":30.0,"secondDemurrageDays":1,"secondDemurrageRate":30.0,"thereafterDemurrageRate":30.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":1,"firstDetentionRate":30.0,"secondDetentionDays":1,"secondDetentionRate":30.0,"thereafterDetentionRate":30.0,"currency":"USD","carrierScac":"OOLU","ffwScac":None,"portOfLoadingLocode":"CNSHK","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"BGVAR","combinedFreeDays":28.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"INMAA","combinedFreeDays":28.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":4,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"MZBEW","combinedFreeDays":28.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":6.28,"secondDemurrageDays":5,"secondDemurrageRate":8.22,"thereafterDemurrageRate":12.08,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":6.28,"secondDetentionDays":5,"secondDetentionRate":8.22,"thereafterDetentionRate":12.08,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"ARBUE","combinedFreeDays":7.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":6.28,"secondDemurrageDays":5,"secondDemurrageRate":8.22,"thereafterDemurrageRate":12.08,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":6.28,"secondDetentionDays":5,"secondDetentionRate":8.22,"thereafterDetentionRate":12.08,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"BRRIG","combinedFreeDays":7.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":0,"secondDetentionRate":0.0,"thereafterDetentionRate":80.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"BRNVT","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":0,"secondDetentionRate":0.0,"thereafterDetentionRate":80.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"CNHUA","combinedFreeDays":20.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":0,"secondDetentionRate":0.0,"thereafterDetentionRate":80.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"INENR","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":0,"secondDetentionRate":0.0,"thereafterDetentionRate":80.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"ZADUR","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":0,"secondDetentionRate":0.0,"thereafterDetentionRate":80.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"USORF","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGAPP","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":5.95,"secondDemurrageDays":5,"secondDemurrageRate":7.83,"thereafterDemurrageRate":9.91,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":5.95,"secondDetentionDays":5,"secondDetentionRate":7.83,"thereafterDetentionRate":9.91,"currency":"USD","carrierScac":"ONEY","ffwScac":None,"portOfLoadingLocode":"BDCGP","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"BGVAR","combinedFreeDays":28.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"INMAA","combinedFreeDays":28.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":295.0,"secondDemurrageDays":5,"secondDemurrageRate":355.0,"thereafterDemurrageRate":395.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":200.0,"secondDetentionDays":4,"secondDetentionRate":235.0,"thereafterDetentionRate":260.0,"currency":"USD","carrierScac":"CMDU","ffwScac":None,"portOfLoadingLocode":"MZBEW","combinedFreeDays":28.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":6.28,"secondDemurrageDays":5,"secondDemurrageRate":8.22,"thereafterDemurrageRate":12.08,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":6.28,"secondDetentionDays":5,"secondDetentionRate":8.22,"thereafterDetentionRate":12.08,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"ARBUE","combinedFreeDays":7.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":6.28,"secondDemurrageDays":5,"secondDemurrageRate":8.22,"thereafterDemurrageRate":12.08,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":6.28,"secondDetentionDays":5,"secondDetentionRate":8.22,"thereafterDetentionRate":12.08,"currency":"USD","carrierScac":"HLCU","ffwScac":None,"portOfLoadingLocode":"BRRIG","combinedFreeDays":7.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"BRNVT","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"CNHUA","combinedFreeDays":20.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"INENR","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"ZADUR","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":0,"firstDemurrageRate":0.0,"secondDemurrageDays":5,"secondDemurrageRate":65.0,"thereafterDemurrageRate":120.0,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":0,"firstDetentionRate":0.0,"secondDetentionDays":5,"secondDetentionRate":165.0,"thereafterDetentionRate":195.0,"currency":"USD","carrierScac":"MSCU","ffwScac":None,"portOfLoadingLocode":"USORF","combinedFreeDays":14.0},
-    {"terminalIdentifier":"NGTIN","demurrageStartEventType":"DISCHARGE_AT_POD","demurrageTariffCalculationMethod":"CALENDAR_DAYS","validityStartDate":"2026-01-01","validityEndDate":"2026-12-31","freeDemurrageDays":None,"firstDemurrageDays":5,"firstDemurrageRate":5.95,"secondDemurrageDays":5,"secondDemurrageRate":7.83,"thereafterDemurrageRate":9.91,"detentionStartEventType":"GATE_OUT_FULL_FROM_POD","detentionTariffCalculationMethod":"CALENDAR_DAYS","freeDetentionDays":None,"firstDetentionDays":5,"firstDetentionRate":5.95,"secondDetentionDays":5,"secondDetentionRate":7.83,"thereafterDetentionRate":9.91,"currency":"USD","carrierScac":"ONEY","ffwScac":None,"portOfLoadingLocode":"BDCGP","combinedFreeDays":14.0},
+
+# ─────────────────────────────────────────────
+# CONTRACT CSV PARSER
+# ─────────────────────────────────────────────
+# Expected CSV columns (same keys as the original hardcoded dicts):
+#   terminalIdentifier, demurrageStartEventType, demurrageTariffCalculationMethod,
+#   validityStartDate, validityEndDate, freeDemurrageDays, firstDemurrageDays,
+#   firstDemurrageRate, secondDemurrageDays, secondDemurrageRate, thereafterDemurrageRate,
+#   detentionStartEventType, detentionTariffCalculationMethod, freeDetentionDays,
+#   firstDetentionDays, firstDetentionRate, secondDetentionDays, secondDetentionRate,
+#   thereafterDetentionRate, currency, carrierScac, ffwScac, portOfLoadingLocode,
+#   combinedFreeDays
+
+NUMERIC_CONTRACT_COLS = [
+    "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
+    "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
+    "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
+    "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
+    "combinedFreeDays",
 ]
+
+NULLABLE_CONTRACT_COLS = [
+    "freeDemurrageDays", "freeDetentionDays", "combinedFreeDays",
+    "carrierScac", "ffwScac",
+]
+
+
+def parse_contracts_csv(contract_file):
+    """
+    Read a contracts CSV and return a list of dicts identical in structure
+    to the original hardcoded BAT_CONTRACTS list.
+
+    Empty strings / NaN in nullable columns are converted to None so
+    the downstream engine handles them the same way.
+    """
+    cdf = pd.read_csv(contract_file)
+
+    # Coerce numeric columns
+    for col in NUMERIC_CONTRACT_COLS:
+        if col in cdf.columns:
+            cdf[col] = pd.to_numeric(cdf[col], errors="coerce")
+
+    # Convert to list of dicts, replacing NaN / empty strings with None
+    # for the nullable columns (matching original hardcoded behaviour)
+    records = cdf.to_dict(orient="records")
+    for rec in records:
+        for col in NULLABLE_CONTRACT_COLS:
+            val = rec.get(col)
+            if val is None:
+                continue
+            if isinstance(val, float) and np.isnan(val):
+                rec[col] = None
+            elif isinstance(val, str) and val.strip() == "":
+                rec[col] = None
+    return records, cdf
 
 
 # ─────────────────────────────────────────────
@@ -263,7 +254,7 @@ def build_contract_lookup(contracts_list):
     return carrier_lookup, ffw_lookup
 
 
-def process_shipments(df):
+def process_shipments(df, contracts_list):
     """
     Main D&D calculation engine.
     
@@ -292,7 +283,7 @@ def process_shipments(df):
     # "today" = the moment this analysis runs (used for active shipments with no CER)
     analysis_run_date = pd.Timestamp.now(tz="UTC")
 
-    carrier_lookup, ffw_lookup = build_contract_lookup(BAT_CONTRACTS)
+    carrier_lookup, ffw_lookup = build_contract_lookup(contracts_list)
 
     # Build match key per shipment
     df["_match_key"] = (
@@ -432,10 +423,6 @@ def process_shipments(df):
 
 
 # ─────────────────────────────────────────────
-# PLOTLY THEME
-# ─────────────────────────────────────────────
-
-# ─────────────────────────────────────────────
 # STREAMLIT APP
 # ─────────────────────────────────────────────
 
@@ -443,22 +430,65 @@ def process_shipments(df):
 with st.sidebar:
     st.markdown("### 🚢 BAT D&D Analyzer")
     st.markdown("---")
+    uploaded_contract_file = st.file_uploader(
+        "Upload Contract CSV",
+        type=["csv"],
+        help="Upload the D&D contract terms CSV. Must contain columns: terminalIdentifier, carrierScac, ffwScac, portOfLoadingLocode, freeDemurrageDays, firstDemurrageDays, firstDemurrageRate, etc.",
+        key="contract_uploader",
+    )
     uploaded_file = st.file_uploader(
         "Upload D&D Shipment CSV",
         type=["csv"],
         help="Upload the P44 ocean shipment export CSV with milestone events.",
+        key="shipment_uploader",
     )
     st.markdown("---")
-    st.markdown("**Contracts:** BAT 2026 (hardcoded)")
-    st.markdown(f"**Contract rows:** {len(BAT_CONTRACTS)}")
-    st.markdown("**Terminals:** USORF, HRRJK, NGAPP, NGTIN")
-    st.markdown("**Carriers:** CMDU, HLCU, MSCU, ONEY, OOLU + KHNN (FFW)")
 
-if uploaded_file is None:
+# ── Parse contracts if uploaded ──
+contracts_list = None
+contracts_df = None
+if uploaded_contract_file is not None:
+    try:
+        contracts_list, contracts_df = parse_contracts_csv(uploaded_contract_file)
+        with st.sidebar:
+            st.success(f"✅ Loaded {len(contracts_list)} contract rows")
+            terminals = sorted(set(c.get("terminalIdentifier", "") for c in contracts_list if c.get("terminalIdentifier")))
+            carrier_scacs = sorted(set(c.get("carrierScac", "") for c in contracts_list if c.get("carrierScac")))
+            ffw_scacs = sorted(set(c.get("ffwScac", "") for c in contracts_list if c.get("ffwScac")))
+            st.markdown(f"**Contract rows:** {len(contracts_list)}")
+            st.markdown(f"**Terminals:** {', '.join(terminals) if terminals else '—'}")
+            carriers_display = carrier_scacs.copy()
+            if ffw_scacs:
+                carriers_display += [f"{s} (FFW)" for s in ffw_scacs]
+            st.markdown(f"**Carriers:** {', '.join(carriers_display) if carriers_display else '—'}")
+    except Exception as e:
+        st.sidebar.error(f"❌ Error parsing contract CSV: {e}")
+        contracts_list = None
+
+# ── Landing page when files are missing ──
+if uploaded_contract_file is None or uploaded_file is None:
     st.markdown("## 🚢 BAT Demurrage & Detention Analyzer")
     st.markdown("---")
-    st.info("Upload a D&D shipment CSV from the sidebar to get started.")
-    st.markdown("**Expected milestone columns:** `CEP → CGI → CLL → VDL → VAD → CDD → CGO → CER`")
+    if uploaded_contract_file is None and uploaded_file is None:
+        st.info("Upload both a **Contract CSV** and a **Shipment CSV** from the sidebar to get started.")
+    elif uploaded_contract_file is None:
+        st.info("Upload a **Contract CSV** from the sidebar to continue.")
+    else:
+        st.info("Upload a **D&D Shipment CSV** from the sidebar to continue.")
+
+    st.markdown("**Expected contract CSV columns:**")
+    st.code(
+        "terminalIdentifier, carrierScac, ffwScac, portOfLoadingLocode,\n"
+        "freeDemurrageDays, firstDemurrageDays, firstDemurrageRate,\n"
+        "secondDemurrageDays, secondDemurrageRate, thereafterDemurrageRate,\n"
+        "freeDetentionDays, firstDetentionDays, firstDetentionRate,\n"
+        "secondDetentionDays, secondDetentionRate, thereafterDetentionRate,\n"
+        "combinedFreeDays, currency, demurrageStartEventType,\n"
+        "demurrageTariffCalculationMethod, detentionStartEventType,\n"
+        "detentionTariffCalculationMethod, validityStartDate, validityEndDate",
+        language=None,
+    )
+    st.markdown("**Expected shipment milestone columns:** `CEP → CGI → CLL → VDL → VAD → CDD → CGO → CER`")
     st.code(
         "Demurrage = [(CGO - CDD) - Free Days] x Tiered Rate\n"
         "Detention  = [(CER - CGO) - Free Days] x Tiered Rate\n"
@@ -473,13 +503,17 @@ if uploaded_file is None:
     )
     st.stop()
 
+if contracts_list is None:
+    st.error("Contract file could not be parsed. Please check the format and re-upload.")
+    st.stop()
+
 # ── Load & process ──
-with st.spinner("Processing shipments against BAT contracts..."):
+with st.spinner("Processing shipments against uploaded contracts..."):
     raw_df = pd.read_csv(uploaded_file)
-    rdf, total_shipments, cancelled_count = process_shipments(raw_df)
+    rdf, total_shipments, cancelled_count = process_shipments(raw_df, contracts_list)
 
 if len(rdf) == 0:
-    st.error("No shipments matched BAT contracts. Check POD_LOCODE, CARRIER_SCAC, POL_LOCODE columns.")
+    st.error("No shipments matched uploaded contracts. Check POD_LOCODE, CARRIER_SCAC, POL_LOCODE columns.")
     st.stop()
 
 # ── Sidebar filters ──
@@ -571,7 +605,7 @@ with tab_overview:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
         "Total D&D Cost", f"${fdf['TOTAL_DD_COST'].sum():,.0f}", f"{len(fdf)} matched of {total_shipments:,}",
-        help="Combined demurrage + detention charges across all matched shipments. Only shipments with a matching BAT contract (POD + Carrier + POL) are included.",
+        help="Combined demurrage + detention charges across all matched shipments. Only shipments with a matching contract (POD + Carrier + POL) are included.",
     )
     c2.metric(
         "Demurrage", f"${fdf['DEM_COST'].sum():,.0f}", f"{(fdf['DEM_COST']>0).sum()} shipments",
@@ -908,9 +942,8 @@ with tab_download:
             }
             pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
 
-            # Contract reference sheet
-            cdf = pd.DataFrame(BAT_CONTRACTS)
-            contract_cols = [
+            # Contract reference sheet — from uploaded contract data
+            contract_display_cols = [
                 "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
                 "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
                 "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
@@ -918,7 +951,8 @@ with tab_download:
                 "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
                 "combinedFreeDays",
             ]
-            cdf[contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
+            existing_contract_cols = [c for c in contract_display_cols if c in contracts_df.columns]
+            contracts_df[existing_contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
 
         st.download_button(
             label="📥 Download as Excel (3 sheets: Results + Summary + Contracts)",
@@ -933,7 +967,7 @@ with tab_download:
     st.markdown("**Download contains 3 sheets:**")
     st.markdown("1. **D&D Results** — Every matched shipment with charges, dates, free days, and costs")
     st.markdown("2. **Summary** — KPI snapshot (total costs, counts, analysis date)")
-    st.markdown("3. **Contracts** — BAT 2026 contract terms used for calculation")
+    st.markdown("3. **Contracts** — Contract terms used for calculation (from uploaded file)")
 
 
 # ═══════════════════════════════════════════════
@@ -991,7 +1025,7 @@ with tab_logic:
     st.markdown("#### Contract Matching")
     st.code(
         "Match Key = POD_LOCODE | CARRIER_SCAC | POL_LOCODE\n"
-        "Fallback  = POD_LOCODE | FFW_SCAC (KHNN) | POL_LOCODE",
+        "Fallback  = POD_LOCODE | FFW_SCAC | POL_LOCODE",
         language=None,
     )
 
@@ -1017,8 +1051,7 @@ with tab_logic:
     )
 
     st.markdown("---")
-    st.markdown("#### Contract Table (Hardcoded)")
-    cdf = pd.DataFrame(BAT_CONTRACTS)
+    st.markdown("#### Contract Table (Uploaded)")
     contract_display_cols = [
         "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
         "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
@@ -1027,4 +1060,5 @@ with tab_logic:
         "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
         "combinedFreeDays",
     ]
-    st.dataframe(cdf[contract_display_cols], use_container_width=True, hide_index=True, height=400)
+    existing_contract_cols = [c for c in contract_display_cols if c in contracts_df.columns]
+    st.dataframe(contracts_df[existing_contract_cols], use_container_width=True, hide_index=True, height=400)
