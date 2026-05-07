@@ -277,8 +277,10 @@ def process_shipments(df, contracts_list):
     for col in event_cols:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
-    df["REPORTING_DATE"] = pd.to_datetime(df["REPORTING_DATE"], errors="coerce", utc=True)
-    df["SHIPMENT_MODIFIED_DATE"] = pd.to_datetime(df["SHIPMENT_MODIFIED_DATE"], errors="coerce", utc=True)
+    if "REPORTING_DATE" in df.columns:
+        df["REPORTING_DATE"] = pd.to_datetime(df["REPORTING_DATE"], errors="coerce", utc=True)
+    if "SHIPMENT_MODIFIED_DATE" in df.columns:
+        df["SHIPMENT_MODIFIED_DATE"] = pd.to_datetime(df["SHIPMENT_MODIFIED_DATE"], errors="coerce", utc=True)
 
     # "today" = the moment this analysis runs (used for active shipments with no CER)
     analysis_run_date = pd.Timestamp.now(tz="UTC")
@@ -293,6 +295,12 @@ def process_shipments(df, contracts_list):
         + "|"
         + df["POL_LOCODE"].fillna("")
     )
+
+    # ── Ensure required columns exist (safe defaults) ──
+    if "SUBSCRIPTION_STATUS" not in df.columns:
+        df["SUBSCRIPTION_STATUS"] = ""
+    if "SHIPMENT_MODIFIED_DATE" not in df.columns:
+        df["SHIPMENT_MODIFIED_DATE"] = pd.NaT
 
     # ── Exclude CANCELLED shipments from D&D calculation entirely ──
     cancelled_count = (df["SUBSCRIPTION_STATUS"] == "CANCELLED").sum()
@@ -366,7 +374,7 @@ def process_shipments(df, contracts_list):
                     det_end_source = "TODAY"
                 elif sub_status == "COMPLETED":
                     # Completed → use shipment modified date as end
-                    modified = row["SHIPMENT_MODIFIED_DATE"]
+                    modified = row.get("SHIPMENT_MODIFIED_DATE", pd.NaT)
                     if not pd.isna(modified):
                         det_total_days = max(0, (modified - cgo).total_seconds() / 86400)
                     det_end_source = "MODIFIED_DATE"
