@@ -1,22 +1,36 @@
 """
-BAT Demurrage & Detention (D&D) Analyzer
-=========================================
-Standalone Streamlit app for BAT ocean shipment D&D cost analysis.
+Demurrage & Detention Analyzer
+==============================
+Standalone Streamlit app for ocean shipment demurrage and detention cost analysis.
 
-Calculation Logic (from D&D PM):
-  Demurrage = [(Gate Out Full from POD - Discharge at POD) - Free Dem Days] x Tiered Rate
-  Detention = [(Container Empty Return - Gate Out Full from POD) - Free Det Days] x Tiered Rate
+Calculation Logic:
+  POL Demurrage = Container Loaded on Vessel - Container Gate In at POL
+                = CLL - CGI
 
-Exclusion rule (applies to ALL shipments):
-  CANCELLED  -> shipment excluded from D&D entirely
+  POD Demurrage = Gate Out Full from POD - Discharge at POD
+                = CGO - CDD
 
-No CER handling (when CER is missing):
-  ACTIVE     -> detention accumulates to today's date (analysis run time)
-  COMPLETED  -> detention end = SHIPMENT_MODIFIED_DATE
+  POD Detention = Container Empty Return - Gate Out Full from POD
+                = CER - CGO
 
-Combined Free Days: Demurrage consumes from pool first, detention gets remainder.
+Exclusion rule:
+  CANCELLED -> shipment excluded from D&D entirely
 
-Run: streamlit run streamlit_app.py
+No CER handling:
+  ACTIVE    -> detention accumulates to today's date (analysis run time)
+  COMPLETED -> detention end = SHIPMENT_MODIFIED_DATE
+
+Combined Free Days:
+  Combined free days are consumed continuously across POD demurrage first,
+  then POD detention receives the remaining free-day balance.
+
+Contract Gaps:
+  Shipments without matching contracts are not costed. They are surfaced as
+  potential risk if their POL demurrage, POD demurrage, or POD detention days
+  are above averages observed in matched/contracted shipments.
+
+Run:
+  streamlit run demurrage_detention_analyzer.py
 """
 
 import streamlit as st
@@ -26,35 +40,38 @@ import altair as alt
 from datetime import datetime
 from io import BytesIO
 
-# ─────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # PAGE CONFIG
-# ─────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="BAT D&D Analyzer",
+    page_title="Demurrage & Detention Analyzer",
     page_icon="🚢",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ─────────────────────────────────────────────
-# ALTAIR THEME
-# ─────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# COLORS
+# -----------------------------------------------------------------------------
+POL_DEM_COLOR = "#00a6ff"
 DEM_COLOR = "#f5a623"
 DET_COLOR = "#7b61ff"
 TOTAL_COLOR = "#00d4aa"
 ALERT_COLOR = "#ff5c5c"
+TIER1_COLOR = "#8fd694"
+TIER2_COLOR = "#f5a623"
+THEREAFTER_COLOR = "#ff5c5c"
 
-# ─────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # CUSTOM CSS
-# ─────────────────────────────────────────────
-st.markdown("""
+# -----------------------------------------------------------------------------
+st.markdown(
+    """
 <style>
     .block-container {
         padding-top: 1.5rem;
-        max-width: 1200px;
+        max-width: 1250px;
     }
-
-    /* ───────── FIX TAB VISIBILITY ───────── */
 
     div[data-testid="stTabs"] {
         margin-top: 0.5rem !important;
@@ -68,7 +85,7 @@ st.markdown("""
         margin-bottom: 18px !important;
         border-bottom: 1px solid #2a2d3a !important;
         overflow: visible !important;
-        gap: 26px !important;
+        gap: 18px !important;
     }
 
     div[data-testid="stTabs"] button[role="tab"] {
@@ -106,12 +123,9 @@ st.markdown("""
         border-bottom: 4px solid #ff4b4b !important;
     }
 
-    /* Remove extra clipping from Streamlit wrappers */
     div[data-testid="stTabs"] div {
         overflow: visible !important;
     }
-
-    /* ───────── METRIC CARD READABILITY ───────── */
 
     div[data-testid="stMetric"] {
         background: #111827;
@@ -130,7 +144,7 @@ st.markdown("""
 
     div[data-testid="stMetric"] [data-testid="stMetricValue"] {
         color: #ffffff !important;
-        font-size: 34px !important;
+        font-size: 32px !important;
         font-weight: 900 !important;
     }
 
@@ -139,52 +153,45 @@ st.markdown("""
         font-weight: 900 !important;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-
-# ─────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # CONTRACT CSV PARSER
-# ─────────────────────────────────────────────
-# Expected CSV columns (same keys as the original hardcoded dicts):
-#   terminalIdentifier, demurrageStartEventType, demurrageTariffCalculationMethod,
-#   validityStartDate, validityEndDate, freeDemurrageDays, firstDemurrageDays,
-#   firstDemurrageRate, secondDemurrageDays, secondDemurrageRate, thereafterDemurrageRate,
-#   detentionStartEventType, detentionTariffCalculationMethod, freeDetentionDays,
-#   firstDetentionDays, firstDetentionRate, secondDetentionDays, secondDetentionRate,
-#   thereafterDetentionRate, currency, carrierScac, ffwScac, portOfLoadingLocode,
-#   combinedFreeDays
-
+# -----------------------------------------------------------------------------
 NUMERIC_CONTRACT_COLS = [
-    "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
-    "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
-    "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
-    "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
+    "freeDemurrageDays",
+    "firstDemurrageDays",
+    "firstDemurrageRate",
+    "secondDemurrageDays",
+    "secondDemurrageRate",
+    "thereafterDemurrageRate",
+    "freeDetentionDays",
+    "firstDetentionDays",
+    "firstDetentionRate",
+    "secondDetentionDays",
+    "secondDetentionRate",
+    "thereafterDetentionRate",
     "combinedFreeDays",
 ]
 
 NULLABLE_CONTRACT_COLS = [
-    "freeDemurrageDays", "freeDetentionDays", "combinedFreeDays",
-    "carrierScac", "ffwScac",
+    "freeDemurrageDays",
+    "freeDetentionDays",
+    "combinedFreeDays",
+    "carrierScac",
+    "ffwScac",
 ]
 
 
 def parse_contracts_csv(contract_file):
-    """
-    Read a contracts CSV and return a list of dicts identical in structure
-    to the original hardcoded BAT_CONTRACTS list.
-
-    Empty strings / NaN in nullable columns are converted to None so
-    the downstream engine handles them the same way.
-    """
     cdf = pd.read_csv(contract_file)
 
-    # Coerce numeric columns
     for col in NUMERIC_CONTRACT_COLS:
         if col in cdf.columns:
             cdf[col] = pd.to_numeric(cdf[col], errors="coerce")
 
-    # Convert to list of dicts, replacing NaN / empty strings with None
-    # for the nullable columns (matching original hardcoded behaviour)
     records = cdf.to_dict(orient="records")
     for rec in records:
         for col in NULLABLE_CONTRACT_COLS:
@@ -195,14 +202,14 @@ def parse_contracts_csv(contract_file):
                 rec[col] = None
             elif isinstance(val, str) and val.strip() == "":
                 rec[col] = None
+
     return records, cdf
 
 
-# ─────────────────────────────────────────────
-# D&D CALCULATION ENGINE
-# ─────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# CALCULATION HELPERS
+# -----------------------------------------------------------------------------
 def _safe(val, default=0):
-    """Return val if not None/NaN, else default."""
     if val is None:
         return default
     try:
@@ -213,246 +220,542 @@ def _safe(val, default=0):
     return val
 
 
-def calc_tiered_cost(chargeable_days, t1_days, t1_rate, t2_days, t2_rate, thereafter_rate):
-    """Calculate cost using a 3-tier rate structure."""
+def _days_between(end_ts, start_ts):
+    if pd.isna(end_ts) or pd.isna(start_ts):
+        return None
+    return max(0, (end_ts - start_ts).total_seconds() / 86400)
+
+
+def calc_tiered_cost_breakdown(chargeable_days, t1_days, t1_rate, t2_days, t2_rate, thereafter_rate):
+    """Return detailed tier day/cost breakdown for a 3-tier tariff."""
+    result = {
+        "tier1_days": 0.0,
+        "tier1_cost": 0.0,
+        "tier2_days": 0.0,
+        "tier2_cost": 0.0,
+        "thereafter_days": 0.0,
+        "thereafter_cost": 0.0,
+        "total_cost": 0.0,
+    }
+
     if chargeable_days <= 0:
-        return 0.0
-    cost = 0.0
+        return result
+
     remaining = chargeable_days
-    # Tier 1
+
     t1 = min(remaining, _safe(t1_days))
-    cost += t1 * _safe(t1_rate)
+    result["tier1_days"] = t1
+    result["tier1_cost"] = t1 * _safe(t1_rate)
     remaining -= t1
-    # Tier 2
+
     if remaining > 0:
         t2 = min(remaining, _safe(t2_days))
-        cost += t2 * _safe(t2_rate)
+        result["tier2_days"] = t2
+        result["tier2_cost"] = t2 * _safe(t2_rate)
         remaining -= t2
-    # Thereafter
+
     if remaining > 0:
-        cost += remaining * _safe(thereafter_rate)
-    return round(cost, 2)
+        result["thereafter_days"] = remaining
+        result["thereafter_cost"] = remaining * _safe(thereafter_rate)
+
+    result["total_cost"] = round(
+        result["tier1_cost"] + result["tier2_cost"] + result["thereafter_cost"], 2
+    )
+    return result
 
 
 def build_contract_lookup(contracts_list):
-    """Build carrier and FFW lookup dicts from contract records."""
     carrier_lookup = {}
     ffw_lookup = {}
+
     for c in contracts_list:
-        terminal = c.get("terminalIdentifier", "")
-        pol = c.get("portOfLoadingLocode", "")
+        terminal = str(c.get("terminalIdentifier", "") or "").strip()
+        pol = str(c.get("portOfLoadingLocode", "") or "").strip()
         carrier = c.get("carrierScac")
         ffw = c.get("ffwScac")
+
         if carrier:
-            key = f"{terminal}|{carrier}|{pol}"
-            if key not in carrier_lookup:
-                carrier_lookup[key] = c
+            carrier_key = f"{terminal}|{str(carrier).strip()}|{pol}"
+            if carrier_key not in carrier_lookup:
+                carrier_lookup[carrier_key] = c
+
         if ffw:
-            key = f"{terminal}|{ffw}|{pol}"
-            if key not in ffw_lookup:
-                ffw_lookup[key] = c
+            ffw_key = f"{terminal}|{str(ffw).strip()}|{pol}"
+            if ffw_key not in ffw_lookup:
+                ffw_lookup[ffw_key] = c
+
     return carrier_lookup, ffw_lookup
 
 
+def normalize_required_columns(df):
+    for col in [
+        "SHIPMENT_ID",
+        "CONTAINER_NUMBER",
+        "CARRIER_SCAC",
+        "CARRIER_NAME",
+        "POL_LOCODE",
+        "POL",
+        "POD_LOCODE",
+        "POD",
+        "SUBSCRIPTION_STATUS",
+        "LIFECYCLE_STATUS",
+        "SHIPMENT_MODIFIED_DATE",
+    ]:
+        if col not in df.columns:
+            if col == "SHIPMENT_MODIFIED_DATE":
+                df[col] = pd.NaT
+            else:
+                df[col] = ""
+
+    for col in ["CDD", "CGO", "CER", "VAD", "VDL", "CGI", "CEP", "CLL"]:
+        if col not in df.columns:
+            df[col] = pd.NaT
+
+    return df
+
+
+# -----------------------------------------------------------------------------
+# D&D CALCULATION ENGINE
+# -----------------------------------------------------------------------------
 def process_shipments(df, contracts_list):
-    """
-    Main D&D calculation engine.
-    
-    Milestones in the input CSV:
-      CEP → CGI → CLL → VDL → VAD → CDD → CGO → CER
-    
-    D&D Logic:
-      Demurrage = (CGO - CDD) - free days  →  tiered rate
-      Detention  = (CER - CGO) - free days  →  tiered rate
-    
-    No CER handling:
-      - SUBSCRIPTION_STATUS = CANCELLED  →  exclude shipment entirely (all shipments)
-      - SUBSCRIPTION_STATUS = ACTIVE     + no CER →  detention accumulates to today's date
-      - SUBSCRIPTION_STATUS = COMPLETED  + no CER →  detention end = SHIPMENT_MODIFIED_DATE
-    
-    Combined Free Days: demurrage eats first, detention gets leftover.
-    """
-    # Parse event timestamps
+    df = normalize_required_columns(df.copy())
+
     event_cols = ["CDD", "CGO", "CER", "VAD", "VDL", "CGI", "CEP", "CLL"]
     for col in event_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+        df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+
     if "REPORTING_DATE" in df.columns:
         df["REPORTING_DATE"] = pd.to_datetime(df["REPORTING_DATE"], errors="coerce", utc=True)
-    if "SHIPMENT_MODIFIED_DATE" in df.columns:
-        df["SHIPMENT_MODIFIED_DATE"] = pd.to_datetime(df["SHIPMENT_MODIFIED_DATE"], errors="coerce", utc=True)
 
-    # "today" = the moment this analysis runs (used for active shipments with no CER)
-    analysis_run_date = pd.Timestamp.now(tz="UTC")
-
-    carrier_lookup, ffw_lookup = build_contract_lookup(contracts_list)
-
-    # Build match key per shipment
-    df["_match_key"] = (
-        df["POD_LOCODE"].fillna("")
-        + "|"
-        + df["CARRIER_SCAC"].fillna("")
-        + "|"
-        + df["POL_LOCODE"].fillna("")
+    df["SHIPMENT_MODIFIED_DATE"] = pd.to_datetime(
+        df["SHIPMENT_MODIFIED_DATE"], errors="coerce", utc=True
     )
 
-    # ── Ensure required columns exist (safe defaults) ──
-    if "SUBSCRIPTION_STATUS" not in df.columns:
-        df["SUBSCRIPTION_STATUS"] = ""
-    if "SHIPMENT_MODIFIED_DATE" not in df.columns:
-        df["SHIPMENT_MODIFIED_DATE"] = pd.NaT
+    analysis_run_date = pd.Timestamp.now(tz="UTC")
+    carrier_lookup, ffw_lookup = build_contract_lookup(contracts_list)
 
-    # ── Exclude CANCELLED shipments from D&D calculation entirely ──
+    df["SUBSCRIPTION_STATUS"] = df["SUBSCRIPTION_STATUS"].fillna("").astype(str).str.upper()
     cancelled_count = (df["SUBSCRIPTION_STATUS"] == "CANCELLED").sum()
+    original_count = len(df)
     df = df[df["SUBSCRIPTION_STATUS"] != "CANCELLED"].copy()
 
-    results = []
+    df["_match_key"] = (
+        df["POD_LOCODE"].fillna("").astype(str).str.strip()
+        + "|"
+        + df["CARRIER_SCAC"].fillna("").astype(str).str.strip()
+        + "|"
+        + df["POL_LOCODE"].fillna("").astype(str).str.strip()
+    )
+
+    matched_results = []
+    unmatched_results = []
+
     for _, row in df.iterrows():
         key = row["_match_key"]
         contract = carrier_lookup.get(key) or ffw_lookup.get(key)
-        if contract is None:
-            continue
 
+        cgi = row["CGI"]
+        cll = row["CLL"]
         cdd = row["CDD"]
         cgo = row["CGO"]
         cer = row["CER"]
         sub_status = row.get("SUBSCRIPTION_STATUS", "")
 
-        # Must have CDD (discharge) to calculate anything
-        if pd.isna(cdd):
+        pol_dem_total_days = _days_between(cll, cgi)
+        pod_dem_total_days = _days_between(cgo, cdd)
+
+        pod_det_total_days = None
+        det_accumulating = False
+        det_end_source = ""
+        det_end_ts = pd.NaT
+
+        if not pd.isna(cgo):
+            if not pd.isna(cer):
+                pod_det_total_days = _days_between(cer, cgo)
+                det_end_source = "CER"
+                det_end_ts = cer
+            elif sub_status == "ACTIVE":
+                pod_det_total_days = _days_between(analysis_run_date, cgo)
+                det_accumulating = True
+                det_end_source = "TODAY"
+                det_end_ts = analysis_run_date
+            elif sub_status == "COMPLETED":
+                modified = row.get("SHIPMENT_MODIFIED_DATE", pd.NaT)
+                if not pd.isna(modified):
+                    pod_det_total_days = _days_between(modified, cgo)
+                    det_end_ts = modified
+                det_end_source = "MODIFIED_DATE"
+
+        base_record = {
+            "SHIPMENT_ID": row["SHIPMENT_ID"],
+            "CONTAINER_NUMBER": row.get("CONTAINER_NUMBER", ""),
+            "CARRIER_SCAC": row["CARRIER_SCAC"],
+            "CARRIER_NAME": row.get("CARRIER_NAME", ""),
+            "POL_LOCODE": row["POL_LOCODE"],
+            "POL": row.get("POL", ""),
+            "POD_LOCODE": row["POD_LOCODE"],
+            "POD": row.get("POD", ""),
+            "SUBSCRIPTION_STATUS": sub_status,
+            "LIFECYCLE_STATUS": row.get("LIFECYCLE_STATUS", ""),
+            "CGI": cgi if not pd.isna(cgi) else pd.NaT,
+            "CLL": cll if not pd.isna(cll) else pd.NaT,
+            "CDD": cdd if not pd.isna(cdd) else pd.NaT,
+            "CGO": cgo if not pd.isna(cgo) else pd.NaT,
+            "CER": cer if not pd.isna(cer) else pd.NaT,
+            "DET_END_TS": det_end_ts,
+            "POL_DEM_TOTAL_DAYS": round(pol_dem_total_days, 2) if pol_dem_total_days is not None else None,
+            "POD_DEM_TOTAL_DAYS": round(pod_dem_total_days, 2) if pod_dem_total_days is not None else None,
+            "POD_DET_TOTAL_DAYS": round(pod_det_total_days, 2) if pod_det_total_days is not None else None,
+            "DET_ACCUMULATING": det_accumulating,
+            "DET_END_SOURCE": det_end_source,
+            "LANE": f"{row['POL_LOCODE']} → {row['POD_LOCODE']}",
+            "MATCH_KEY": key,
+        }
+
+        if contract is None:
+            reason_parts = []
+            if pd.isna(cgi) or pd.isna(cll):
+                reason_parts.append("Cannot evaluate POL demurrage; missing CGI or CLL")
+            if pd.isna(cdd) or pd.isna(cgo):
+                reason_parts.append("Cannot evaluate POD demurrage; missing CDD or CGO")
+            if pd.isna(cgo):
+                reason_parts.append("Cannot evaluate POD detention; missing CGO")
+            if pd.isna(cer) and sub_status not in ["ACTIVE", "COMPLETED"]:
+                reason_parts.append("Cannot evaluate POD detention end; missing CER and status not ACTIVE/COMPLETED")
+
+            unmatched_record = base_record.copy()
+            unmatched_record.update(
+                {
+                    "MISSING_CONTRACT_REASON": "No contract for POD | Carrier/FFW | POL",
+                    "DATA_LIMITATION": "; ".join(reason_parts) if reason_parts else "Dwell days available; fees cannot be calculated without contract",
+                    "RISK_FLAG": False,
+                    "RISK_REASONS": "",
+                }
+            )
+            unmatched_results.append(unmatched_record)
             continue
 
-        # ── Free days setup ──
+        # Must have CDD to price POD demurrage/detention. POL demurrage can still be priced with CGI/CLL.
         free_dem = contract.get("freeDemurrageDays")
         free_det = contract.get("freeDetentionDays")
         combined_free = contract.get("combinedFreeDays")
         has_combined = combined_free is not None
 
-        # ── DEMURRAGE: CDD → CGO ──
-        dem_total_days = None
-        dem_chargeable = 0.0
-        dem_cost = 0.0
+        # POL demurrage is modeled separately using demurrage tariff/free days.
+        pol_dem_chargeable = 0.0
+        pol_dem_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
+        if pol_dem_total_days is not None:
+            pol_dem_chargeable = max(0, pol_dem_total_days - _safe(free_dem))
+            pol_dem_breakdown = calc_tiered_cost_breakdown(
+                pol_dem_chargeable,
+                contract.get("firstDemurrageDays"),
+                contract.get("firstDemurrageRate"),
+                contract.get("secondDemurrageDays"),
+                contract.get("secondDemurrageRate"),
+                contract.get("thereafterDemurrageRate"),
+            )
+
+        # POD demurrage.
+        pod_dem_chargeable = 0.0
         remaining_free_for_det = 0.0
-
-        if not pd.isna(cgo):
-            dem_total_days = max(0, (cgo - cdd).total_seconds() / 86400)
-
+        pod_dem_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
+        if pod_dem_total_days is not None:
             if has_combined:
-                dem_chargeable = max(0, dem_total_days - combined_free)
-                remaining_free_for_det = max(0, combined_free - dem_total_days)
+                pod_dem_chargeable = max(0, pod_dem_total_days - combined_free)
+                remaining_free_for_det = max(0, combined_free - pod_dem_total_days)
             else:
-                dem_chargeable = max(0, dem_total_days - _safe(free_dem))
+                pod_dem_chargeable = max(0, pod_dem_total_days - _safe(free_dem))
 
-            if dem_chargeable > 0:
-                dem_cost = calc_tiered_cost(
-                    dem_chargeable,
-                    contract.get("firstDemurrageDays"),
-                    contract.get("firstDemurrageRate"),
-                    contract.get("secondDemurrageDays"),
-                    contract.get("secondDemurrageRate"),
-                    contract.get("thereafterDemurrageRate"),
-                )
+            pod_dem_breakdown = calc_tiered_cost_breakdown(
+                pod_dem_chargeable,
+                contract.get("firstDemurrageDays"),
+                contract.get("firstDemurrageRate"),
+                contract.get("secondDemurrageDays"),
+                contract.get("secondDemurrageRate"),
+                contract.get("thereafterDemurrageRate"),
+            )
 
-        # ── DETENTION: CGO → CER (or accumulating if no CER) ──
-        det_total_days = None
-        det_chargeable = 0.0
-        det_cost = 0.0
-        det_accumulating = False
-        det_end_source = ""  # tracks which date was used for transparency
-
-        if not pd.isna(cgo):
-            if not pd.isna(cer):
-                # Normal case — CER exists
-                det_total_days = max(0, (cer - cgo).total_seconds() / 86400)
-                det_end_source = "CER"
+        # POD detention.
+        pod_det_chargeable = 0.0
+        pod_det_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
+        if pod_det_total_days is not None:
+            if has_combined:
+                pod_det_chargeable = max(0, pod_det_total_days - remaining_free_for_det)
             else:
-                # No CER — determine end date based on subscription status
-                if sub_status == "ACTIVE":
-                    # Still active → accumulate to today (analysis run date)
-                    det_total_days = max(0, (analysis_run_date - cgo).total_seconds() / 86400)
-                    det_accumulating = True
-                    det_end_source = "TODAY"
-                elif sub_status == "COMPLETED":
-                    # Completed → use shipment modified date as end
-                    modified = row.get("SHIPMENT_MODIFIED_DATE", pd.NaT)
-                    if not pd.isna(modified):
-                        det_total_days = max(0, (modified - cgo).total_seconds() / 86400)
-                    det_end_source = "MODIFIED_DATE"
+                pod_det_chargeable = max(0, pod_det_total_days - _safe(free_det))
 
-            if det_total_days is not None:
-                if has_combined:
-                    det_chargeable = max(0, det_total_days - remaining_free_for_det)
-                else:
-                    det_chargeable = max(0, det_total_days - _safe(free_det))
+            pod_det_breakdown = calc_tiered_cost_breakdown(
+                pod_det_chargeable,
+                contract.get("firstDetentionDays"),
+                contract.get("firstDetentionRate"),
+                contract.get("secondDetentionDays"),
+                contract.get("secondDetentionRate"),
+                contract.get("thereafterDetentionRate"),
+            )
 
-                if det_chargeable > 0:
-                    det_cost = calc_tiered_cost(
-                        det_chargeable,
-                        contract.get("firstDetentionDays"),
-                        contract.get("firstDetentionRate"),
-                        contract.get("secondDetentionDays"),
-                        contract.get("secondDetentionRate"),
-                        contract.get("thereafterDetentionRate"),
-                    )
+        pol_dem_cost = pol_dem_breakdown["total_cost"]
+        pod_dem_cost = pod_dem_breakdown["total_cost"]
+        pod_det_cost = pod_det_breakdown["total_cost"]
+        total_cost = round(pol_dem_cost + pod_dem_cost + pod_det_cost, 2)
 
-        results.append(
+        matched_record = base_record.copy()
+        matched_record.update(
             {
-                "SHIPMENT_ID": row["SHIPMENT_ID"],
-                "CONTAINER_NUMBER": row.get("CONTAINER_NUMBER", ""),
-                "CARRIER_SCAC": row["CARRIER_SCAC"],
-                "CARRIER_NAME": row.get("CARRIER_NAME", ""),
-                "POL_LOCODE": row["POL_LOCODE"],
-                "POL": row.get("POL", ""),
-                "POD_LOCODE": row["POD_LOCODE"],
-                "POD": row.get("POD", ""),
-                "SUBSCRIPTION_STATUS": sub_status,
-                "LIFECYCLE_STATUS": row.get("LIFECYCLE_STATUS", ""),
-                "CDD": cdd,
-                "CGO": cgo if not pd.isna(cgo) else pd.NaT,
-                "CER": cer if not pd.isna(cer) else pd.NaT,
-                "DEM_TOTAL_DAYS": round(dem_total_days, 2) if dem_total_days is not None else None,
-                "DEM_CHARGEABLE_DAYS": round(dem_chargeable, 2),
-                "DEM_COST": dem_cost,
-                "DET_TOTAL_DAYS": round(det_total_days, 2) if det_total_days is not None else None,
-                "DET_CHARGEABLE_DAYS": round(det_chargeable, 2),
-                "DET_COST": det_cost,
-                "DET_ACCUMULATING": det_accumulating,
-                "DET_END_SOURCE": det_end_source,
+                "POL_DEM_CHARGEABLE_DAYS": round(pol_dem_chargeable, 2),
+                "POL_DEM_COST": pol_dem_cost,
+                "POD_DEM_CHARGEABLE_DAYS": round(pod_dem_chargeable, 2),
+                "POD_DEM_COST": pod_dem_cost,
+                "POD_DET_CHARGEABLE_DAYS": round(pod_det_chargeable, 2),
+                "POD_DET_COST": pod_det_cost,
+                "DEM_COST": round(pol_dem_cost + pod_dem_cost, 2),
+                "DET_COST": pod_det_cost,
+                "TOTAL_DD_COST": total_cost,
                 "FREE_DEM_DAYS": _safe(free_dem, None),
                 "FREE_DET_DAYS": _safe(free_det, None),
                 "COMBINED_FREE_DAYS": combined_free,
-                "TOTAL_DD_COST": round(dem_cost + det_cost, 2),
                 "CONTRACT_TYPE": "Combined" if has_combined else "Separate",
-                "LANE": f"{row['POL_LOCODE']} → {row['POD_LOCODE']}",
+                "CONTRACT_IDENTIFIER": str(contract.get("terminalIdentifier", "")),
+                "CONTRACT_POL": str(contract.get("portOfLoadingLocode", "")),
+                "POL_DEM_TIER1_DAYS": round(pol_dem_breakdown["tier1_days"], 2),
+                "POL_DEM_TIER1_COST": round(pol_dem_breakdown["tier1_cost"], 2),
+                "POL_DEM_TIER2_DAYS": round(pol_dem_breakdown["tier2_days"], 2),
+                "POL_DEM_TIER2_COST": round(pol_dem_breakdown["tier2_cost"], 2),
+                "POL_DEM_THEREAFTER_DAYS": round(pol_dem_breakdown["thereafter_days"], 2),
+                "POL_DEM_THEREAFTER_COST": round(pol_dem_breakdown["thereafter_cost"], 2),
+                "POD_DEM_TIER1_DAYS": round(pod_dem_breakdown["tier1_days"], 2),
+                "POD_DEM_TIER1_COST": round(pod_dem_breakdown["tier1_cost"], 2),
+                "POD_DEM_TIER2_DAYS": round(pod_dem_breakdown["tier2_days"], 2),
+                "POD_DEM_TIER2_COST": round(pod_dem_breakdown["tier2_cost"], 2),
+                "POD_DEM_THEREAFTER_DAYS": round(pod_dem_breakdown["thereafter_days"], 2),
+                "POD_DEM_THEREAFTER_COST": round(pod_dem_breakdown["thereafter_cost"], 2),
+                "POD_DET_TIER1_DAYS": round(pod_det_breakdown["tier1_days"], 2),
+                "POD_DET_TIER1_COST": round(pod_det_breakdown["tier1_cost"], 2),
+                "POD_DET_TIER2_DAYS": round(pod_det_breakdown["tier2_days"], 2),
+                "POD_DET_TIER2_COST": round(pod_det_breakdown["tier2_cost"], 2),
+                "POD_DET_THEREAFTER_DAYS": round(pod_det_breakdown["thereafter_days"], 2),
+                "POD_DET_THEREAFTER_COST": round(pod_det_breakdown["thereafter_cost"], 2),
             }
         )
+        matched_results.append(matched_record)
 
-    return pd.DataFrame(results), len(df) + cancelled_count, cancelled_count
+    matched_df = pd.DataFrame(matched_results)
+    unmatched_df = pd.DataFrame(unmatched_results)
+
+    unmatched_df = enrich_unmatched_risk(unmatched_df, matched_df)
+
+    return matched_df, unmatched_df, original_count, cancelled_count
 
 
-# ─────────────────────────────────────────────
-# STREAMLIT APP
-# ─────────────────────────────────────────────
+def enrich_unmatched_risk(unmatched_df, matched_df):
+    if unmatched_df.empty:
+        return unmatched_df
 
-# ── Sidebar ──
+    # Use matched shipments as the benchmark. Prefer non-zero dwell days so the threshold is operationally meaningful.
+    def positive_mean(df, col):
+        if df.empty or col not in df.columns:
+            return np.nan
+        s = pd.to_numeric(df[col], errors="coerce")
+        s = s[s > 0]
+        return s.mean() if len(s) else np.nan
+
+    global_avg_pol_dem = positive_mean(matched_df, "POL_DEM_TOTAL_DAYS")
+    global_avg_pod_dem = positive_mean(matched_df, "POD_DEM_TOTAL_DAYS")
+    global_avg_pod_det = positive_mean(matched_df, "POD_DET_TOTAL_DAYS")
+
+    # Fallback thresholds to prevent every small dwell from being flagged when matched data is sparse.
+    if np.isnan(global_avg_pol_dem):
+        global_avg_pol_dem = 3.0
+    if np.isnan(global_avg_pod_dem):
+        global_avg_pod_dem = 3.0
+    if np.isnan(global_avg_pod_det):
+        global_avg_pod_det = 5.0
+
+    unmatched_df["AVG_POL_DEM_BENCHMARK"] = round(global_avg_pol_dem, 2)
+    unmatched_df["AVG_POD_DEM_BENCHMARK"] = round(global_avg_pod_dem, 2)
+    unmatched_df["AVG_POD_DET_BENCHMARK"] = round(global_avg_pod_det, 2)
+
+    risk_flags = []
+    risk_reasons = []
+    risk_score = []
+
+    for _, row in unmatched_df.iterrows():
+        reasons = []
+        score = 0
+
+        pol_days = row.get("POL_DEM_TOTAL_DAYS")
+        pod_dem_days = row.get("POD_DEM_TOTAL_DAYS")
+        pod_det_days = row.get("POD_DET_TOTAL_DAYS")
+
+        if pd.notna(pol_days) and pol_days > global_avg_pol_dem:
+            reasons.append(f"POL demurrage {pol_days:.1f}d vs avg {global_avg_pol_dem:.1f}d")
+            score += 1
+        if pd.notna(pod_dem_days) and pod_dem_days > global_avg_pod_dem:
+            reasons.append(f"POD demurrage {pod_dem_days:.1f}d vs avg {global_avg_pod_dem:.1f}d")
+            score += 1
+        if pd.notna(pod_det_days) and pod_det_days > global_avg_pod_det:
+            reasons.append(f"POD detention {pod_det_days:.1f}d vs avg {global_avg_pod_det:.1f}d")
+            score += 1
+        if bool(row.get("DET_ACCUMULATING")):
+            reasons.append("ACTIVE with no CER; POD detention still accumulating")
+            score += 1
+
+        risk_flags.append(score > 0)
+        risk_score.append(score)
+        risk_reasons.append("; ".join(reasons) if reasons else "No above-average dwell risk detected")
+
+    unmatched_df["RISK_FLAG"] = risk_flags
+    unmatched_df["RISK_SCORE"] = risk_score
+    unmatched_df["RISK_REASONS"] = risk_reasons
+    return unmatched_df
+
+
+# -----------------------------------------------------------------------------
+# DOWNLOAD HELPERS
+# -----------------------------------------------------------------------------
+def format_datetime_cols(dl, cols):
+    for col in cols:
+        if col in dl.columns:
+            dl[col] = pd.to_datetime(dl[col], errors="coerce").dt.strftime("%Y-%m-%d %H:%M").fillna("")
+    return dl
+
+
+def build_download_df(data):
+    dl = data.copy()
+    dl = format_datetime_cols(dl, ["CGI", "CLL", "CDD", "CGO", "CER", "DET_END_TS"])
+
+    rename_map = {
+        "SHIPMENT_ID": "Shipment ID",
+        "CONTAINER_NUMBER": "Container",
+        "CARRIER_SCAC": "Carrier SCAC",
+        "CARRIER_NAME": "Carrier Name",
+        "POL_LOCODE": "Port of Loading",
+        "POD_LOCODE": "Port of Discharge",
+        "LANE": "Lane",
+        "SUBSCRIPTION_STATUS": "Subscription Status",
+        "CGI": "Gate In at POL (CGI)",
+        "CLL": "Loaded on Vessel (CLL)",
+        "CDD": "Discharge at POD (CDD)",
+        "CGO": "Gate Out Full at POD (CGO)",
+        "CER": "Empty Return (CER)",
+        "POL_DEM_TOTAL_DAYS": "POL Demurrage Total Days",
+        "POL_DEM_CHARGEABLE_DAYS": "POL Demurrage Chargeable Days",
+        "POL_DEM_COST": "POL Demurrage Cost (USD)",
+        "POD_DEM_TOTAL_DAYS": "POD Demurrage Total Days",
+        "POD_DEM_CHARGEABLE_DAYS": "POD Demurrage Chargeable Days",
+        "POD_DEM_COST": "POD Demurrage Cost (USD)",
+        "POD_DET_TOTAL_DAYS": "POD Detention Total Days",
+        "POD_DET_CHARGEABLE_DAYS": "POD Detention Chargeable Days",
+        "POD_DET_COST": "POD Detention Cost (USD)",
+        "DEM_COST": "Total Demurrage Cost (USD)",
+        "DET_COST": "Total Detention Cost (USD)",
+        "TOTAL_DD_COST": "Total D&D Cost (USD)",
+        "CONTRACT_TYPE": "Free Days Type",
+        "FREE_DEM_DAYS": "Free Demurrage Days",
+        "FREE_DET_DAYS": "Free Detention Days",
+        "COMBINED_FREE_DAYS": "Combined Free Days",
+        "DET_ACCUMULATING": "Detention Still Accumulating",
+        "DET_END_SOURCE": "Detention End Date Source",
+        "MATCH_KEY": "Contract Match Key",
+    }
+    dl = dl.rename(columns={k: v for k, v in rename_map.items() if k in dl.columns})
+
+    drop_cols = [c for c in ["POL", "POD", "LIFECYCLE_STATUS"] if c in dl.columns]
+    dl = dl.drop(columns=drop_cols, errors="ignore")
+
+    desired_order = [
+        "Shipment ID",
+        "Container",
+        "Carrier SCAC",
+        "Carrier Name",
+        "Lane",
+        "Port of Loading",
+        "Port of Discharge",
+        "Subscription Status",
+        "Gate In at POL (CGI)",
+        "Loaded on Vessel (CLL)",
+        "Discharge at POD (CDD)",
+        "Gate Out Full at POD (CGO)",
+        "Empty Return (CER)",
+        "Free Days Type",
+        "Free Demurrage Days",
+        "Free Detention Days",
+        "Combined Free Days",
+        "POL Demurrage Total Days",
+        "POL Demurrage Chargeable Days",
+        "POL Demurrage Cost (USD)",
+        "POD Demurrage Total Days",
+        "POD Demurrage Chargeable Days",
+        "POD Demurrage Cost (USD)",
+        "POD Detention Total Days",
+        "POD Detention Chargeable Days",
+        "POD Detention Cost (USD)",
+        "Total Demurrage Cost (USD)",
+        "Total Detention Cost (USD)",
+        "Total D&D Cost (USD)",
+        "Detention Still Accumulating",
+        "Detention End Date Source",
+        "Contract Match Key",
+    ]
+    existing = [c for c in desired_order if c in dl.columns]
+    remaining = [c for c in dl.columns if c not in existing]
+    return dl[existing + remaining]
+
+
+def build_unmatched_download_df(data):
+    if data.empty:
+        return data.copy()
+
+    dl = data.copy()
+    dl = format_datetime_cols(dl, ["CGI", "CLL", "CDD", "CGO", "CER", "DET_END_TS"])
+    rename_map = {
+        "SHIPMENT_ID": "Shipment ID",
+        "CONTAINER_NUMBER": "Container",
+        "CARRIER_SCAC": "Carrier SCAC",
+        "CARRIER_NAME": "Carrier Name",
+        "POL_LOCODE": "Port of Loading",
+        "POD_LOCODE": "Port of Discharge",
+        "LANE": "Lane",
+        "SUBSCRIPTION_STATUS": "Subscription Status",
+        "CGI": "Gate In at POL (CGI)",
+        "CLL": "Loaded on Vessel (CLL)",
+        "CDD": "Discharge at POD (CDD)",
+        "CGO": "Gate Out Full at POD (CGO)",
+        "CER": "Empty Return (CER)",
+        "POL_DEM_TOTAL_DAYS": "POL Demurrage Days",
+        "POD_DEM_TOTAL_DAYS": "POD Demurrage Days",
+        "POD_DET_TOTAL_DAYS": "POD Detention Days",
+        "MATCH_KEY": "Missing Contract Key",
+        "RISK_FLAG": "Risk Flag",
+        "RISK_SCORE": "Risk Score",
+        "RISK_REASONS": "Risk Reasons",
+        "DATA_LIMITATION": "Data Limitation",
+    }
+    dl = dl.rename(columns={k: v for k, v in rename_map.items() if k in dl.columns})
+    drop_cols = [c for c in ["POL", "POD", "LIFECYCLE_STATUS"] if c in dl.columns]
+    dl = dl.drop(columns=drop_cols, errors="ignore")
+    return dl
+
+
+# -----------------------------------------------------------------------------
+# SIDEBAR
+# -----------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("### 🚢 BAT D&D Analyzer")
+    st.markdown("### 🚢 Demurrage & Detention Analyzer")
     st.markdown("---")
     uploaded_contract_file = st.file_uploader(
         "Upload Contract CSV",
         type=["csv"],
-        help="Upload the D&D contract terms CSV. Must contain columns: terminalIdentifier, carrierScac, ffwScac, portOfLoadingLocode, freeDemurrageDays, firstDemurrageDays, firstDemurrageRate, etc.",
+        help="Upload the D&D contract terms CSV.",
         key="contract_uploader",
     )
     uploaded_file = st.file_uploader(
-        "Upload D&D Shipment CSV",
+        "Upload Shipment CSV",
         type=["csv"],
-        help="Upload the P44 ocean shipment export CSV with milestone events.",
+        help="Upload the ocean shipment export CSV with milestone events.",
         key="shipment_uploader",
     )
     st.markdown("---")
 
-# ── Parse contracts if uploaded ──
 contracts_list = None
 contracts_df = None
 if uploaded_contract_file is not None:
@@ -468,21 +771,24 @@ if uploaded_contract_file is not None:
             carriers_display = carrier_scacs.copy()
             if ffw_scacs:
                 carriers_display += [f"{s} (FFW)" for s in ffw_scacs]
-            st.markdown(f"**Carriers:** {', '.join(carriers_display) if carriers_display else '—'}")
+            st.markdown(f"**Carriers/FFWs:** {', '.join(carriers_display) if carriers_display else '—'}")
     except Exception as e:
         st.sidebar.error(f"❌ Error parsing contract CSV: {e}")
         contracts_list = None
 
-# ── Landing page when files are missing ──
+# -----------------------------------------------------------------------------
+# LANDING PAGE
+# -----------------------------------------------------------------------------
 if uploaded_contract_file is None or uploaded_file is None:
-    st.markdown("## 🚢 BAT Demurrage & Detention Analyzer")
+    st.markdown("## 🚢 Demurrage & Detention Analyzer")
     st.markdown("---")
+
     if uploaded_contract_file is None and uploaded_file is None:
         st.info("Upload both a **Contract CSV** and a **Shipment CSV** from the sidebar to get started.")
     elif uploaded_contract_file is None:
         st.info("Upload a **Contract CSV** from the sidebar to continue.")
     else:
-        st.info("Upload a **D&D Shipment CSV** from the sidebar to continue.")
+        st.info("Upload a **Shipment CSV** from the sidebar to continue.")
 
     st.markdown("**Expected contract CSV columns:**")
     st.code(
@@ -491,22 +797,16 @@ if uploaded_contract_file is None or uploaded_file is None:
         "secondDemurrageDays, secondDemurrageRate, thereafterDemurrageRate,\n"
         "freeDetentionDays, firstDetentionDays, firstDetentionRate,\n"
         "secondDetentionDays, secondDetentionRate, thereafterDetentionRate,\n"
-        "combinedFreeDays, currency, demurrageStartEventType,\n"
-        "demurrageTariffCalculationMethod, detentionStartEventType,\n"
-        "detentionTariffCalculationMethod, validityStartDate, validityEndDate",
+        "combinedFreeDays, currency, validityStartDate, validityEndDate",
         language=None,
     )
-    st.markdown("**Expected shipment milestone columns:** `CEP → CGI → CLL → VDL → VAD → CDD → CGO → CER`")
+
+    st.markdown("**Expected shipment milestone columns:**")
     st.code(
-        "Demurrage = [(CGO - CDD) - Free Days] x Tiered Rate\n"
-        "Detention  = [(CER - CGO) - Free Days] x Tiered Rate\n"
-        "\n"
-        "Exclusion rule:\n"
-        "  CANCELLED  -> excluded from analysis (all shipments)\n"
-        "\n"
-        "No CER handling:\n"
-        "  ACTIVE     -> detention accumulates to today's date\n"
-        "  COMPLETED  -> detention end = SHIPMENT_MODIFIED_DATE",
+        "CEP → CGI → CLL → VDL → VAD → CDD → CGO → CER\n\n"
+        "POL Demurrage = CGI → CLL\n"
+        "POD Demurrage = CDD → CGO\n"
+        "POD Detention = CGO → CER",
         language=None,
     )
     st.stop()
@@ -515,558 +815,862 @@ if contracts_list is None:
     st.error("Contract file could not be parsed. Please check the format and re-upload.")
     st.stop()
 
-# ── Load & process ──
+# -----------------------------------------------------------------------------
+# LOAD AND PROCESS
+# -----------------------------------------------------------------------------
 with st.spinner("Processing shipments against uploaded contracts..."):
     raw_df = pd.read_csv(uploaded_file)
-    rdf, total_shipments, cancelled_count = process_shipments(raw_df, contracts_list)
+    rdf, unmatched_df, total_shipments, cancelled_count = process_shipments(raw_df, contracts_list)
 
-if len(rdf) == 0:
-    st.error("No shipments matched uploaded contracts. Check POD_LOCODE, CARRIER_SCAC, POL_LOCODE columns.")
+if rdf.empty and unmatched_df.empty:
+    st.error("No usable shipments found after excluding cancelled shipments.")
     st.stop()
 
-# ── Sidebar filters ──
+# -----------------------------------------------------------------------------
+# SIDEBAR FILTERS
+# -----------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("---")
     st.markdown("### Filters")
-    carriers = sorted(rdf["CARRIER_SCAC"].unique())
+
+    if not rdf.empty:
+        carriers = sorted(rdf["CARRIER_SCAC"].dropna().unique())
+        pods = sorted(rdf["POD_LOCODE"].dropna().unique())
+    else:
+        carriers = []
+        pods = []
+
     sel_carriers = st.multiselect("Carrier", carriers, default=carriers)
-    pods = sorted(rdf["POD_LOCODE"].unique())
     sel_pods = st.multiselect("POD Terminal", pods, default=pods)
     show_zero = st.checkbox("Include $0 charge shipments", value=True)
 
-fdf = rdf[rdf["CARRIER_SCAC"].isin(sel_carriers) & rdf["POD_LOCODE"].isin(sel_pods)]
-if not show_zero:
-    fdf = fdf[fdf["TOTAL_DD_COST"] > 0]
+if not rdf.empty:
+    fdf = rdf[rdf["CARRIER_SCAC"].isin(sel_carriers) & rdf["POD_LOCODE"].isin(sel_pods)].copy()
+    if not show_zero:
+        fdf = fdf[fdf["TOTAL_DD_COST"] > 0]
+else:
+    fdf = rdf.copy()
 
-# ─────────────────────────────────────────────
-# HELPER: Clean download file
-# ─────────────────────────────────────────────
-def build_download_df(data):
-    """Build a clean, easy-to-understand download DataFrame."""
-    dl = data.copy()
-    # Format dates
-    for col in ["CDD", "CGO", "CER"]:
-        if col in dl.columns:
-            dl[col] = pd.to_datetime(dl[col], errors="coerce").dt.strftime("%Y-%m-%d %H:%M").fillna("")
+# For unmatched, only apply filters if selected options exist; otherwise show all unmatched.
+if not unmatched_df.empty and sel_carriers and sel_pods:
+    ufdf = unmatched_df[
+        unmatched_df["CARRIER_SCAC"].isin(sel_carriers) | unmatched_df["POD_LOCODE"].isin(sel_pods)
+    ].copy()
+else:
+    ufdf = unmatched_df.copy()
 
-    # Rename columns to human-readable names
-    rename_map = {
-        "SHIPMENT_ID": "Shipment ID",
-        "CONTAINER_NUMBER": "Container",
-        "CARRIER_SCAC": "Carrier SCAC",
-        "CARRIER_NAME": "Carrier Name",
-        "POL_LOCODE": "Port of Loading",
-        "POD_LOCODE": "Port of Discharge",
-        "LANE": "Lane",
-        "SUBSCRIPTION_STATUS": "Subscription Status",
-        "CDD": "Discharge Date (CDD)",
-        "CGO": "Gate Out Date (CGO)",
-        "CER": "Empty Return Date (CER)",
-        "DEM_TOTAL_DAYS": "Demurrage Total Days",
-        "DEM_CHARGEABLE_DAYS": "Demurrage Chargeable Days",
-        "DEM_COST": "Demurrage Cost (USD)",
-        "DET_TOTAL_DAYS": "Detention Total Days",
-        "DET_CHARGEABLE_DAYS": "Detention Chargeable Days",
-        "DET_COST": "Detention Cost (USD)",
-        "TOTAL_DD_COST": "Total D&D Cost (USD)",
-        "CONTRACT_TYPE": "Free Days Type",
-        "FREE_DEM_DAYS": "Free Demurrage Days",
-        "FREE_DET_DAYS": "Free Detention Days",
-        "COMBINED_FREE_DAYS": "Combined Free Days",
-        "DET_ACCUMULATING": "Detention Still Accumulating",
-        "DET_END_SOURCE": "Detention End Date Source",
-    }
-    # Only rename columns that exist
-    dl = dl.rename(columns={k: v for k, v in rename_map.items() if k in dl.columns})
-
-    # Drop internal columns
-    drop_cols = [c for c in ["POL", "POD", "LIFECYCLE_STATUS"] if c in dl.columns]
-    dl = dl.drop(columns=drop_cols, errors="ignore")
-
-    # Reorder: identifiers first, then events, then charges
-    desired_order = [
-        "Shipment ID", "Container", "Carrier SCAC", "Carrier Name",
-        "Lane", "Port of Loading", "Port of Discharge", "Subscription Status",
-        "Discharge Date (CDD)", "Gate Out Date (CGO)", "Empty Return Date (CER)",
-        "Free Days Type", "Free Demurrage Days", "Free Detention Days", "Combined Free Days",
-        "Demurrage Total Days", "Demurrage Chargeable Days", "Demurrage Cost (USD)",
-        "Detention Total Days", "Detention Chargeable Days", "Detention Cost (USD)",
-        "Total D&D Cost (USD)",
-        "Detention Still Accumulating", "Detention End Date Source",
+# -----------------------------------------------------------------------------
+# TABS
+# -----------------------------------------------------------------------------
+tab_overview, tab_carrier, tab_port, tab_ships, tab_gaps, tab_tiers, tab_download = st.tabs(
+    [
+        "📊 Overview",
+        "🚛 Carriers",
+        "🏗️ Ports & Lanes",
+        "📦 Shipments",
+        "⚠️ Contract Gaps",
+        "🔥 Tier Exposure",
+        "📥 Download",
     ]
-    existing = [c for c in desired_order if c in dl.columns]
-    remaining = [c for c in dl.columns if c not in existing]
-    dl = dl[existing + remaining]
-
-    return dl
-
-
-# ── TABS ──
-tab_overview, tab_carrier, tab_port, tab_ships, tab_download, tab_logic = st.tabs(
-    ["📊 Overview", "🚛 Carriers", "🏗️ Ports & Lanes", "📦 Shipments", "📥 Download", "⚙️ Logic"]
 )
 
-# ═══════════════════════════════════════════════
-# TAB: OVERVIEW
-# ═══════════════════════════════════════════════
+# -----------------------------------------------------------------------------
+# OVERVIEW
+# -----------------------------------------------------------------------------
 with tab_overview:
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(
-        "Total D&D Cost", f"${fdf['TOTAL_DD_COST'].sum():,.0f}", f"{len(fdf)} matched of {total_shipments:,}",
-        help="Combined demurrage + detention charges across all matched shipments. Only shipments with a matching contract (POD + Carrier + POL) are included.",
-    )
-    c2.metric(
-        "Demurrage", f"${fdf['DEM_COST'].sum():,.0f}", f"{(fdf['DEM_COST']>0).sum()} shipments",
-        help="Cost for containers sitting at the port terminal after discharge (CDD) and before gate out (CGO). Charges start after free days are used up.",
-    )
-    c3.metric(
-        "Detention", f"${fdf['DET_COST'].sum():,.0f}", f"{(fdf['DET_COST']>0).sum()} shipments",
-        help="Cost for containers held outside the port after gate out (CGO) and before empty return (CER). Charges start after remaining free days are used up.",
-    )
-    c4.metric(
-        "⚠️ Accumulating", f"{fdf['DET_ACCUMULATING'].sum()}", "ACTIVE, no CER",
-        help="Shipments where the container was gated out but no empty return (CER) event was received. These are still ACTIVE, so detention is calculated up to today's date and keeps growing.",
-    )
+    st.markdown("### Executive Summary")
 
-    c1, c2, c3, c4 = st.columns(4)
-    avg_dem = fdf.loc[fdf["DEM_COST"] > 0, "DEM_CHARGEABLE_DAYS"].mean()
-    avg_det = fdf.loc[fdf["DET_COST"] > 0, "DET_CHARGEABLE_DAYS"].mean()
-    c1.metric(
-        "Avg Dem Days", f"{avg_dem:.1f}d" if not np.isnan(avg_dem) else "—",
-        help="Average number of chargeable demurrage days per shipment (only counting shipments that actually incurred demurrage). This is the time beyond free days that the container sat at the port terminal.",
-    )
-    c2.metric(
-        "Avg Det Days", f"{avg_det:.1f}d" if not np.isnan(avg_det) else "—",
-        help="Average number of chargeable detention days per shipment (only counting shipments that actually incurred detention). This is the time beyond free days that the container was held after gate out.",
-    )
-    c3.metric(
-        "Within Free Days", f"{(fdf['TOTAL_DD_COST'] == 0).sum()}",
-        help="Number of shipments where the total time (discharge to empty return) stayed within the contractual free days — so no D&D charges were incurred.",
-    )
-    c4.metric(
-        "Max Single Shipment", f"${fdf['TOTAL_DD_COST'].max():,.0f}",
-        help="The highest total D&D cost on a single shipment. Check the Shipments tab sorted by Total Cost to see which container this is.",
-    )
-
-    if cancelled_count > 0:
-        st.caption(f"ℹ️ {cancelled_count} cancelled shipments excluded from analysis.")
-
-    st.markdown("---")
-
-    # ── Cost by Carrier (stacked bar) ──
-    st.caption("💡 Which carriers are driving the most D&D cost? Orange = time at port (demurrage), purple = time after gate out (detention).")
-    carrier_agg = (
-        fdf.groupby("CARRIER_SCAC")
-        .agg(Demurrage=("DEM_COST", "sum"), Detention=("DET_COST", "sum"))
-        .reset_index()
-    )
-    carrier_melt = carrier_agg.melt(id_vars="CARRIER_SCAC", var_name="Type", value_name="Cost")
-    carrier_melt["Cost"] = carrier_melt["Cost"].round(0)
-
-    chart_carrier = (
-        alt.Chart(carrier_melt)
-        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
-        .encode(
-            y=alt.Y("CARRIER_SCAC:N", sort="-x", title="Carrier"),
-            x=alt.X("Cost:Q", title="Cost (USD)"),
-            color=alt.Color("Type:N", scale=alt.Scale(domain=["Demurrage", "Detention"], range=[DEM_COLOR, DET_COLOR])),
-            tooltip=["CARRIER_SCAC", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+    if fdf.empty:
+        st.warning("No matched shipments available for the selected filters.")
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(
+            "Total D&D Cost",
+            f"${fdf['TOTAL_DD_COST'].sum():,.0f}",
+            f"{len(fdf)} matched of {total_shipments:,}",
+            help="Combined POL demurrage + POD demurrage + POD detention charges across matched shipments.",
         )
-        .properties(title="D&D Cost by Carrier", height=250)
-    )
-    st.altair_chart(chart_carrier, use_container_width=True)
-
-    # ── Cost by POD (stacked bar) ──
-    st.caption("💡 Which port terminals are the most expensive? High demurrage = slow customs/pickup. High detention = consignee holding containers.")
-    pod_agg = (
-        fdf.groupby("POD_LOCODE")
-        .agg(Demurrage=("DEM_COST", "sum"), Detention=("DET_COST", "sum"))
-        .reset_index()
-    )
-    pod_melt = pod_agg.melt(id_vars="POD_LOCODE", var_name="Type", value_name="Cost")
-    pod_melt["Cost"] = pod_melt["Cost"].round(0)
-
-    chart_pod = (
-        alt.Chart(pod_melt)
-        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
-        .encode(
-            y=alt.Y("POD_LOCODE:N", sort="-x", title="POD Terminal"),
-            x=alt.X("Cost:Q", title="Cost (USD)"),
-            color=alt.Color("Type:N", scale=alt.Scale(domain=["Demurrage", "Detention"], range=[DEM_COLOR, DET_COLOR])),
-            tooltip=["POD_LOCODE", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+        c2.metric(
+            "POL Demurrage",
+            f"${fdf['POL_DEM_COST'].sum():,.0f}",
+            f"{(fdf['POL_DEM_COST'] > 0).sum()} shipments",
+            help="Cost from container gate-in at port of loading to loaded-on-vessel.",
         )
-        .properties(title="D&D Cost by POD Terminal", height=220)
-    )
-    st.altair_chart(chart_pod, use_container_width=True)
-
-
-# ═══════════════════════════════════════════════
-# TAB: CARRIERS
-# ═══════════════════════════════════════════════
-with tab_carrier:
-    carrier_detail = (
-        fdf.groupby(["CARRIER_SCAC", "CARRIER_NAME"])
-        .agg(
-            Ships=("SHIPMENT_ID", "count"),
-            Dem_Ships=("DEM_COST", lambda x: (x > 0).sum()),
-            Det_Ships=("DET_COST", lambda x: (x > 0).sum()),
-            Dem_Cost=("DEM_COST", "sum"),
-            Det_Cost=("DET_COST", "sum"),
-            Avg_Dem_Days=("DEM_CHARGEABLE_DAYS", lambda x: x[x > 0].mean() if (x > 0).any() else 0),
-            Avg_Det_Days=("DET_CHARGEABLE_DAYS", lambda x: x[x > 0].mean() if (x > 0).any() else 0),
+        c3.metric(
+            "POD Demurrage",
+            f"${fdf['POD_DEM_COST'].sum():,.0f}",
+            f"{(fdf['POD_DEM_COST'] > 0).sum()} shipments",
+            help="Cost from container discharge at POD to gate-out-full at POD.",
         )
-        .reset_index()
-    )
-    carrier_detail["Total_Cost"] = carrier_detail["Dem_Cost"] + carrier_detail["Det_Cost"]
-    carrier_detail = carrier_detail.sort_values("Total_Cost", ascending=False)
+        c4.metric(
+            "POD Detention",
+            f"${fdf['POD_DET_COST'].sum():,.0f}",
+            f"{(fdf['POD_DET_COST'] > 0).sum()} shipments",
+            help="Cost from gate-out-full at POD to empty container return.",
+        )
 
-    st.markdown("#### Carrier Summary")
-    st.dataframe(
-        carrier_detail.style.format({
-            "Dem_Cost": "${:,.0f}", "Det_Cost": "${:,.0f}", "Total_Cost": "${:,.0f}",
-            "Avg_Dem_Days": "{:.1f}", "Avg_Det_Days": "{:.1f}",
-        }),
-        use_container_width=True, hide_index=True,
-    )
+        c1, c2, c3, c4 = st.columns(4)
+        avg_pol_dem = fdf.loc[fdf["POL_DEM_COST"] > 0, "POL_DEM_CHARGEABLE_DAYS"].mean()
+        avg_pod_dem = fdf.loc[fdf["POD_DEM_COST"] > 0, "POD_DEM_CHARGEABLE_DAYS"].mean()
+        avg_det = fdf.loc[fdf["POD_DET_COST"] > 0, "POD_DET_CHARGEABLE_DAYS"].mean()
+        c1.metric("Avg POL Dem Days", f"{avg_pol_dem:.1f}d" if not np.isnan(avg_pol_dem) else "—")
+        c2.metric("Avg POD Dem Days", f"{avg_pod_dem:.1f}d" if not np.isnan(avg_pod_dem) else "—")
+        c3.metric("Avg POD Det Days", f"{avg_det:.1f}d" if not np.isnan(avg_det) else "—")
+        c4.metric(
+            "⚠️ Accumulating",
+            f"{fdf['DET_ACCUMULATING'].sum()}",
+            "ACTIVE, no CER",
+            help="Active shipments with no empty return. Detention is calculated up to today's date and keeps growing.",
+        )
 
-    st.markdown("---")
-    st.markdown("#### Carrier × POD Breakdown")
-    cp = (
-        fdf.groupby(["CARRIER_SCAC", "POD_LOCODE"])
-        .agg(Ships=("SHIPMENT_ID", "count"), Dem=("DEM_COST", "sum"), Det=("DET_COST", "sum"))
-        .reset_index()
-    )
-    cp["Total"] = cp["Dem"] + cp["Det"]
-    cp = cp[cp["Total"] > 0].sort_values("Total", ascending=False)
+        if cancelled_count > 0:
+            st.caption(f"ℹ️ {cancelled_count} cancelled shipments excluded from analysis.")
 
-    # Heatmap
-    if len(cp) > 0:
-        heat = (
-            alt.Chart(cp)
-            .mark_rect(cornerRadius=4)
-            .encode(
-                x=alt.X("POD_LOCODE:N", title="POD"),
-                y=alt.Y("CARRIER_SCAC:N", title="Carrier"),
-                color=alt.Color("Total:Q", scale=alt.Scale(scheme="oranges"), title="Total D&D"),
-                tooltip=["CARRIER_SCAC", "POD_LOCODE", "Ships",
-                         alt.Tooltip("Dem:Q", format="$,.0f"),
-                         alt.Tooltip("Det:Q", format="$,.0f"),
-                         alt.Tooltip("Total:Q", format="$,.0f")],
+        st.markdown("---")
+        st.caption("💡 Cost split by carrier. Blue = POL demurrage, orange = POD demurrage, purple = POD detention.")
+
+        carrier_agg = (
+            fdf.groupby("CARRIER_SCAC")
+            .agg(
+                POL_Demurrage=("POL_DEM_COST", "sum"),
+                POD_Demurrage=("POD_DEM_COST", "sum"),
+                POD_Detention=("POD_DET_COST", "sum"),
             )
-            .properties(title="Cost Heatmap: Carrier × POD", height=250)
-        )
-        text = heat.mark_text(fontSize=11, fontWeight="bold").encode(
-            text=alt.Text("Total:Q", format="$,.0f"),
-            color=alt.condition(alt.datum.Total > cp["Total"].median(), alt.value("white"), alt.value("black")),
-        )
-        st.altair_chart(heat + text, use_container_width=True)
-
-    st.dataframe(
-        cp.style.format({"Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}),
-        use_container_width=True, hide_index=True,
-    )
-
-
-# ═══════════════════════════════════════════════
-# TAB: PORTS & LANES
-# ═══════════════════════════════════════════════
-with tab_port:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### POD Terminal Summary")
-        pod_sum = (
-            fdf.groupby(["POD_LOCODE", "POD"])
-            .agg(Ships=("SHIPMENT_ID", "count"), Dem=("DEM_COST", "sum"), Det=("DET_COST", "sum"))
             .reset_index()
         )
-        pod_sum["Total"] = pod_sum["Dem"] + pod_sum["Det"]
-        pod_sum = pod_sum.sort_values("Total", ascending=False)
-        st.dataframe(
-            pod_sum.style.format({"Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}),
-            use_container_width=True, hide_index=True,
+        carrier_melt = carrier_agg.melt(id_vars="CARRIER_SCAC", var_name="Type", value_name="Cost")
+        carrier_melt["Type"] = carrier_melt["Type"].replace(
+            {
+                "POL_Demurrage": "POL Demurrage",
+                "POD_Demurrage": "POD Demurrage",
+                "POD_Detention": "POD Detention",
+            }
         )
-    with col2:
-        st.markdown("#### Dem vs Det Split by POD")
-        pod_melt2 = pod_sum.melt(id_vars="POD_LOCODE", value_vars=["Dem", "Det"], var_name="Type", value_name="Cost")
-        ch = (
-            alt.Chart(pod_melt2)
+
+        chart_carrier = (
+            alt.Chart(carrier_melt)
             .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
             .encode(
-                x=alt.X("POD_LOCODE:N", title="POD"),
-                y=alt.Y("Cost:Q", title="Cost (USD)", stack=True),
-                color=alt.Color("Type:N", scale=alt.Scale(domain=["Dem", "Det"], range=[DEM_COLOR, DET_COLOR])),
+                y=alt.Y("CARRIER_SCAC:N", sort="-x", title="Carrier"),
+                x=alt.X("Cost:Q", title="Cost (USD)"),
+                color=alt.Color(
+                    "Type:N",
+                    scale=alt.Scale(
+                        domain=["POL Demurrage", "POD Demurrage", "POD Detention"],
+                        range=[POL_DEM_COLOR, DEM_COLOR, DET_COLOR],
+                    ),
+                ),
+                tooltip=["CARRIER_SCAC", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+            )
+            .properties(title="D&D Cost by Carrier", height=280)
+        )
+        st.altair_chart(chart_carrier, use_container_width=True)
+
+        st.caption("💡 Cost split by POD terminal. High POD demurrage = pickup/terminal delay. High detention = empty return delay.")
+        pod_agg = (
+            fdf.groupby("POD_LOCODE")
+            .agg(
+                POL_Demurrage=("POL_DEM_COST", "sum"),
+                POD_Demurrage=("POD_DEM_COST", "sum"),
+                POD_Detention=("POD_DET_COST", "sum"),
+            )
+            .reset_index()
+        )
+        pod_melt = pod_agg.melt(id_vars="POD_LOCODE", var_name="Type", value_name="Cost")
+        pod_melt["Type"] = pod_melt["Type"].replace(
+            {
+                "POL_Demurrage": "POL Demurrage",
+                "POD_Demurrage": "POD Demurrage",
+                "POD_Detention": "POD Detention",
+            }
+        )
+        chart_pod = (
+            alt.Chart(pod_melt)
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+            .encode(
+                y=alt.Y("POD_LOCODE:N", sort="-x", title="POD Terminal"),
+                x=alt.X("Cost:Q", title="Cost (USD)"),
+                color=alt.Color(
+                    "Type:N",
+                    scale=alt.Scale(
+                        domain=["POL Demurrage", "POD Demurrage", "POD Detention"],
+                        range=[POL_DEM_COLOR, DEM_COLOR, DET_COLOR],
+                    ),
+                ),
                 tooltip=["POD_LOCODE", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
             )
-            .properties(height=300)
+            .properties(title="D&D Cost by POD Terminal", height=250)
         )
-        st.altair_chart(ch, use_container_width=True)
+        st.altair_chart(chart_pod, use_container_width=True)
 
-    st.markdown("---")
-    st.markdown("#### Top 20 Lanes by Total D&D Cost")
-    lane_agg = (
-        fdf.groupby("LANE")
-        .agg(
-            Ships=("SHIPMENT_ID", "count"),
-            Carriers=("CARRIER_SCAC", lambda x: ", ".join(sorted(x.unique()))),
-            Dem=("DEM_COST", "sum"), Det=("DET_COST", "sum"),
-            Avg_Dem_Days=("DEM_CHARGEABLE_DAYS", lambda x: round(x[x > 0].mean(), 1) if (x > 0).any() else 0),
-        )
-        .reset_index()
-    )
-    lane_agg["Total"] = lane_agg["Dem"] + lane_agg["Det"]
-    lane_agg = lane_agg.sort_values("Total", ascending=False).head(20)
-    st.dataframe(
-        lane_agg.style.format({"Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}),
-        use_container_width=True, hide_index=True,
-    )
+# -----------------------------------------------------------------------------
+# CARRIERS
+# -----------------------------------------------------------------------------
+with tab_carrier:
+    st.markdown("### Carrier Summary")
 
-
-# ═══════════════════════════════════════════════
-# TAB: SHIPMENT EXPLORER
-# ═══════════════════════════════════════════════
-with tab_ships:
-    st.markdown("#### Shipment-Level D&D Detail")
-    st.caption(f"Showing {len(fdf)} matched shipments. Use sidebar filters to narrow.")
-
-    sort_col = st.selectbox("Sort by", ["TOTAL_DD_COST", "DEM_COST", "DET_COST", "DEM_CHARGEABLE_DAYS", "DET_CHARGEABLE_DAYS"])
-    top_n = st.slider("Show top N", 10, min(500, len(fdf)), 50)
-
-    display_cols = [
-        "CONTAINER_NUMBER", "CARRIER_SCAC", "LANE",
-        "CDD", "CGO", "CER",
-        "DEM_TOTAL_DAYS", "DEM_CHARGEABLE_DAYS", "DEM_COST",
-        "DET_TOTAL_DAYS", "DET_CHARGEABLE_DAYS", "DET_COST",
-        "TOTAL_DD_COST", "CONTRACT_TYPE", "DET_ACCUMULATING", "DET_END_SOURCE",
-    ]
-    show_df = fdf[display_cols].sort_values(sort_col, ascending=False).head(top_n).copy()
-
-    for dc in ["CDD", "CGO", "CER"]:
-        show_df[dc] = pd.to_datetime(show_df[dc], errors="coerce").dt.strftime("%Y-%m-%d").fillna("—")
-
-    show_df["DET_STATUS"] = show_df.apply(
-        lambda r: "⚠️ Active → Today" if r["DET_ACCUMULATING"] else
-                  ("📅 Completed → Modified" if r["DET_END_SOURCE"] == "MODIFIED_DATE" else "✓ CER"),
-        axis=1,
-    )
-    show_df = show_df.drop(columns=["DET_ACCUMULATING", "DET_END_SOURCE"])
-
-    st.dataframe(
-        show_df.style.format({"DEM_COST": "${:,.2f}", "DET_COST": "${:,.2f}", "TOTAL_DD_COST": "${:,.2f}"}),
-        use_container_width=True, hide_index=True, height=600,
-    )
-
-    # ── Distribution charts ──
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        dem_data = fdf.loc[fdf["DEM_COST"] > 0, ["DEM_CHARGEABLE_DAYS"]].copy()
-        if len(dem_data) > 0:
-            ch = alt.Chart(dem_data).mark_bar(color=DEM_COLOR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-                x=alt.X("DEM_CHARGEABLE_DAYS:Q", bin=alt.Bin(maxbins=20), title="Chargeable Days"),
-                y=alt.Y("count()", title="Shipments"),
-            ).properties(title="Demurrage Days Distribution", height=220)
-            st.altair_chart(ch, use_container_width=True)
-
-    with col2:
-        det_data = fdf.loc[fdf["DET_COST"] > 0, ["DET_CHARGEABLE_DAYS"]].copy()
-        if len(det_data) > 0:
-            ch = alt.Chart(det_data).mark_bar(color=DET_COLOR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-                x=alt.X("DET_CHARGEABLE_DAYS:Q", bin=alt.Bin(maxbins=20), title="Chargeable Days"),
-                y=alt.Y("count()", title="Shipments"),
-            ).properties(title="Detention Days Distribution", height=220)
-            st.altair_chart(ch, use_container_width=True)
-
-    # Scatter
-    scatter_df = fdf[(fdf["DEM_CHARGEABLE_DAYS"] > 0) | (fdf["DET_CHARGEABLE_DAYS"] > 0)].copy()
-    if len(scatter_df) > 0:
-        ch = (
-            alt.Chart(scatter_df)
-            .mark_circle(opacity=0.7)
-            .encode(
-                x=alt.X("DEM_CHARGEABLE_DAYS:Q", title="Demurrage Days"),
-                y=alt.Y("DET_CHARGEABLE_DAYS:Q", title="Detention Days"),
-                size=alt.Size("TOTAL_DD_COST:Q", title="Total Cost", scale=alt.Scale(range=[30, 500])),
-                color=alt.Color("CARRIER_SCAC:N", title="Carrier"),
-                tooltip=["CONTAINER_NUMBER", "CARRIER_SCAC", "LANE",
-                         alt.Tooltip("DEM_CHARGEABLE_DAYS:Q", format=".1f"),
-                         alt.Tooltip("DET_CHARGEABLE_DAYS:Q", format=".1f"),
-                         alt.Tooltip("TOTAL_DD_COST:Q", format="$,.0f")],
+    if fdf.empty:
+        st.warning("No matched shipments available for the selected filters.")
+    else:
+        carrier_detail = (
+            fdf.groupby(["CARRIER_SCAC", "CARRIER_NAME"])
+            .agg(
+                Ships=("SHIPMENT_ID", "count"),
+                POL_Dem_Ships=("POL_DEM_COST", lambda x: (x > 0).sum()),
+                POD_Dem_Ships=("POD_DEM_COST", lambda x: (x > 0).sum()),
+                Det_Ships=("POD_DET_COST", lambda x: (x > 0).sum()),
+                POL_Dem_Cost=("POL_DEM_COST", "sum"),
+                POD_Dem_Cost=("POD_DEM_COST", "sum"),
+                Det_Cost=("POD_DET_COST", "sum"),
+                Avg_POL_Dem_Days=("POL_DEM_CHARGEABLE_DAYS", lambda x: x[x > 0].mean() if (x > 0).any() else 0),
+                Avg_POD_Dem_Days=("POD_DEM_CHARGEABLE_DAYS", lambda x: x[x > 0].mean() if (x > 0).any() else 0),
+                Avg_Det_Days=("POD_DET_CHARGEABLE_DAYS", lambda x: x[x > 0].mean() if (x > 0).any() else 0),
             )
-            .properties(title="Demurrage vs Detention (bubble = total cost)", height=350)
+            .reset_index()
+        )
+        carrier_detail["Total_Cost"] = (
+            carrier_detail["POL_Dem_Cost"] + carrier_detail["POD_Dem_Cost"] + carrier_detail["Det_Cost"]
+        )
+        carrier_detail = carrier_detail.sort_values("Total_Cost", ascending=False)
+
+        st.dataframe(
+            carrier_detail.style.format(
+                {
+                    "POL_Dem_Cost": "${:,.0f}",
+                    "POD_Dem_Cost": "${:,.0f}",
+                    "Det_Cost": "${:,.0f}",
+                    "Total_Cost": "${:,.0f}",
+                    "Avg_POL_Dem_Days": "{:.1f}",
+                    "Avg_POD_Dem_Days": "{:.1f}",
+                    "Avg_Det_Days": "{:.1f}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("---")
+        st.markdown("#### Carrier × POD Breakdown")
+        cp = (
+            fdf.groupby(["CARRIER_SCAC", "POD_LOCODE"])
+            .agg(
+                Ships=("SHIPMENT_ID", "count"),
+                POL_Dem=("POL_DEM_COST", "sum"),
+                POD_Dem=("POD_DEM_COST", "sum"),
+                Det=("POD_DET_COST", "sum"),
+            )
+            .reset_index()
+        )
+        cp["Total"] = cp["POL_Dem"] + cp["POD_Dem"] + cp["Det"]
+        cp = cp[cp["Total"] > 0].sort_values("Total", ascending=False)
+
+        if len(cp) > 0:
+            heat = (
+                alt.Chart(cp)
+                .mark_rect(cornerRadius=4)
+                .encode(
+                    x=alt.X("POD_LOCODE:N", title="POD"),
+                    y=alt.Y("CARRIER_SCAC:N", title="Carrier"),
+                    color=alt.Color("Total:Q", scale=alt.Scale(scheme="oranges"), title="Total D&D"),
+                    tooltip=[
+                        "CARRIER_SCAC",
+                        "POD_LOCODE",
+                        "Ships",
+                        alt.Tooltip("POL_Dem:Q", format="$,.0f"),
+                        alt.Tooltip("POD_Dem:Q", format="$,.0f"),
+                        alt.Tooltip("Det:Q", format="$,.0f"),
+                        alt.Tooltip("Total:Q", format="$,.0f"),
+                    ],
+                )
+                .properties(title="Cost Heatmap: Carrier × POD", height=280)
+            )
+            text = heat.mark_text(fontSize=11, fontWeight="bold").encode(
+                text=alt.Text("Total:Q", format="$,.0f"),
+                color=alt.condition(alt.datum.Total > cp["Total"].median(), alt.value("white"), alt.value("black")),
+            )
+            st.altair_chart(heat + text, use_container_width=True)
+
+        st.dataframe(
+            cp.style.format(
+                {"POL_Dem": "${:,.0f}", "POD_Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+# -----------------------------------------------------------------------------
+# PORTS & LANES
+# -----------------------------------------------------------------------------
+with tab_port:
+    st.markdown("### Ports & Lanes")
+
+    if fdf.empty:
+        st.warning("No matched shipments available for the selected filters.")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### POD Terminal Summary")
+            pod_sum = (
+                fdf.groupby(["POD_LOCODE", "POD"])
+                .agg(
+                    Ships=("SHIPMENT_ID", "count"),
+                    POL_Dem=("POL_DEM_COST", "sum"),
+                    POD_Dem=("POD_DEM_COST", "sum"),
+                    Det=("POD_DET_COST", "sum"),
+                )
+                .reset_index()
+            )
+            pod_sum["Total"] = pod_sum["POL_Dem"] + pod_sum["POD_Dem"] + pod_sum["Det"]
+            pod_sum = pod_sum.sort_values("Total", ascending=False)
+            st.dataframe(
+                pod_sum.style.format(
+                    {"POL_Dem": "${:,.0f}", "POD_Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        with col2:
+            st.markdown("#### Cost Split by POD")
+            pod_melt2 = pod_sum.melt(
+                id_vars="POD_LOCODE",
+                value_vars=["POL_Dem", "POD_Dem", "Det"],
+                var_name="Type",
+                value_name="Cost",
+            )
+            pod_melt2["Type"] = pod_melt2["Type"].replace(
+                {"POL_Dem": "POL Demurrage", "POD_Dem": "POD Demurrage", "Det": "POD Detention"}
+            )
+            ch = (
+                alt.Chart(pod_melt2)
+                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                .encode(
+                    x=alt.X("POD_LOCODE:N", title="POD"),
+                    y=alt.Y("Cost:Q", title="Cost (USD)", stack=True),
+                    color=alt.Color(
+                        "Type:N",
+                        scale=alt.Scale(
+                            domain=["POL Demurrage", "POD Demurrage", "POD Detention"],
+                            range=[POL_DEM_COLOR, DEM_COLOR, DET_COLOR],
+                        ),
+                    ),
+                    tooltip=["POD_LOCODE", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(ch, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("#### Top 20 Lanes by Total D&D Cost")
+        lane_agg = (
+            fdf.groupby("LANE")
+            .agg(
+                Ships=("SHIPMENT_ID", "count"),
+                Carriers=("CARRIER_SCAC", lambda x: ", ".join(sorted(x.dropna().unique()))),
+                POL_Dem=("POL_DEM_COST", "sum"),
+                POD_Dem=("POD_DEM_COST", "sum"),
+                Det=("POD_DET_COST", "sum"),
+                Avg_POL_Dem_Days=("POL_DEM_CHARGEABLE_DAYS", lambda x: round(x[x > 0].mean(), 1) if (x > 0).any() else 0),
+                Avg_POD_Dem_Days=("POD_DEM_CHARGEABLE_DAYS", lambda x: round(x[x > 0].mean(), 1) if (x > 0).any() else 0),
+                Avg_Det_Days=("POD_DET_CHARGEABLE_DAYS", lambda x: round(x[x > 0].mean(), 1) if (x > 0).any() else 0),
+            )
+            .reset_index()
+        )
+        lane_agg["Total"] = lane_agg["POL_Dem"] + lane_agg["POD_Dem"] + lane_agg["Det"]
+        lane_agg = lane_agg.sort_values("Total", ascending=False).head(20)
+        st.dataframe(
+            lane_agg.style.format(
+                {"POL_Dem": "${:,.0f}", "POD_Dem": "${:,.0f}", "Det": "${:,.0f}", "Total": "${:,.0f}"}
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+# -----------------------------------------------------------------------------
+# SHIPMENT EXPLORER
+# -----------------------------------------------------------------------------
+with tab_ships:
+    st.markdown("### Shipment-Level D&D Detail")
+
+    if fdf.empty:
+        st.warning("No matched shipments available for the selected filters.")
+    else:
+        st.caption(f"Showing {len(fdf)} matched shipments. Use sidebar filters to narrow.")
+
+        sort_options = [
+            "TOTAL_DD_COST",
+            "POL_DEM_COST",
+            "POD_DEM_COST",
+            "POD_DET_COST",
+            "POL_DEM_CHARGEABLE_DAYS",
+            "POD_DEM_CHARGEABLE_DAYS",
+            "POD_DET_CHARGEABLE_DAYS",
+        ]
+        sort_col = st.selectbox("Sort by", sort_options)
+        top_n = st.slider("Show top N", 10, min(500, max(len(fdf), 10)), min(50, max(len(fdf), 10)))
+
+        display_cols = [
+            "CONTAINER_NUMBER",
+            "SHIPMENT_ID",
+            "CARRIER_SCAC",
+            "LANE",
+            "CGI",
+            "CLL",
+            "CDD",
+            "CGO",
+            "CER",
+            "POL_DEM_TOTAL_DAYS",
+            "POL_DEM_CHARGEABLE_DAYS",
+            "POL_DEM_COST",
+            "POD_DEM_TOTAL_DAYS",
+            "POD_DEM_CHARGEABLE_DAYS",
+            "POD_DEM_COST",
+            "POD_DET_TOTAL_DAYS",
+            "POD_DET_CHARGEABLE_DAYS",
+            "POD_DET_COST",
+            "TOTAL_DD_COST",
+            "CONTRACT_TYPE",
+            "DET_ACCUMULATING",
+            "DET_END_SOURCE",
+        ]
+        show_df = fdf[[c for c in display_cols if c in fdf.columns]].sort_values(sort_col, ascending=False).head(top_n).copy()
+
+        for dc in ["CGI", "CLL", "CDD", "CGO", "CER"]:
+            if dc in show_df.columns:
+                show_df[dc] = pd.to_datetime(show_df[dc], errors="coerce").dt.strftime("%Y-%m-%d").fillna("—")
+
+        show_df["DET_STATUS"] = show_df.apply(
+            lambda r: "⚠️ Active → Today"
+            if r.get("DET_ACCUMULATING", False)
+            else ("📅 Completed → Modified" if r.get("DET_END_SOURCE") == "MODIFIED_DATE" else "✓ CER"),
+            axis=1,
+        )
+        show_df = show_df.drop(columns=["DET_ACCUMULATING", "DET_END_SOURCE"], errors="ignore")
+
+        st.dataframe(
+            show_df.style.format(
+                {
+                    "POL_DEM_COST": "${:,.2f}",
+                    "POD_DEM_COST": "${:,.2f}",
+                    "POD_DET_COST": "${:,.2f}",
+                    "TOTAL_DD_COST": "${:,.2f}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+            height=600,
+        )
+
+        st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            pol_data = fdf.loc[fdf["POL_DEM_COST"] > 0, ["POL_DEM_CHARGEABLE_DAYS"]].copy()
+            if len(pol_data) > 0:
+                ch = (
+                    alt.Chart(pol_data)
+                    .mark_bar(color=POL_DEM_COLOR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                    .encode(
+                        x=alt.X("POL_DEM_CHARGEABLE_DAYS:Q", bin=alt.Bin(maxbins=20), title="Chargeable Days"),
+                        y=alt.Y("count()", title="Shipments"),
+                    )
+                    .properties(title="POL Demurrage Days Distribution", height=230)
+                )
+                st.altair_chart(ch, use_container_width=True)
+
+        with col2:
+            dem_data = fdf.loc[fdf["POD_DEM_COST"] > 0, ["POD_DEM_CHARGEABLE_DAYS"]].copy()
+            if len(dem_data) > 0:
+                ch = (
+                    alt.Chart(dem_data)
+                    .mark_bar(color=DEM_COLOR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                    .encode(
+                        x=alt.X("POD_DEM_CHARGEABLE_DAYS:Q", bin=alt.Bin(maxbins=20), title="Chargeable Days"),
+                        y=alt.Y("count()", title="Shipments"),
+                    )
+                    .properties(title="POD Demurrage Days Distribution", height=230)
+                )
+                st.altair_chart(ch, use_container_width=True)
+
+        with col3:
+            det_data = fdf.loc[fdf["POD_DET_COST"] > 0, ["POD_DET_CHARGEABLE_DAYS"]].copy()
+            if len(det_data) > 0:
+                ch = (
+                    alt.Chart(det_data)
+                    .mark_bar(color=DET_COLOR, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                    .encode(
+                        x=alt.X("POD_DET_CHARGEABLE_DAYS:Q", bin=alt.Bin(maxbins=20), title="Chargeable Days"),
+                        y=alt.Y("count()", title="Shipments"),
+                    )
+                    .properties(title="POD Detention Days Distribution", height=230)
+                )
+                st.altair_chart(ch, use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# CONTRACT GAPS
+# -----------------------------------------------------------------------------
+with tab_gaps:
+    st.markdown("### ⚠️ Contract Gaps")
+    st.caption(
+        "These shipments did not match a contract, so fees are not calculated. The app surfaces containers where dwell days are above matched-shipment averages, which may indicate missing contract setup."
+    )
+
+    if unmatched_df.empty:
+        st.success("No unmatched shipments found. All non-cancelled shipments matched uploaded contracts.")
+    else:
+        risk_df = unmatched_df[unmatched_df["RISK_FLAG"] == True].copy()
+        active_no_cer = unmatched_df[unmatched_df["DET_ACCUMULATING"] == True].copy()
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Unmatched Shipments", f"{len(unmatched_df):,}")
+        c2.metric("Risk Containers", f"{len(risk_df):,}", "above avg dwell")
+        c3.metric("Missing Contract Keys", f"{unmatched_df['MATCH_KEY'].nunique():,}")
+        c4.metric("Active, No CER", f"{len(active_no_cer):,}", "detention may grow")
+
+        st.markdown("---")
+        st.markdown("#### Missing Contract Combinations")
+        combo = (
+            unmatched_df.groupby(["POD_LOCODE", "CARRIER_SCAC", "POL_LOCODE", "MATCH_KEY"])
+            .agg(
+                Shipments=("SHIPMENT_ID", "count"),
+                Containers=("CONTAINER_NUMBER", lambda x: x.nunique()),
+                Risk_Containers=("RISK_FLAG", lambda x: int(x.sum())),
+                Avg_POL_Dem_Days=("POL_DEM_TOTAL_DAYS", "mean"),
+                Avg_POD_Dem_Days=("POD_DEM_TOTAL_DAYS", "mean"),
+                Avg_POD_Det_Days=("POD_DET_TOTAL_DAYS", "mean"),
+                Max_POD_Det_Days=("POD_DET_TOTAL_DAYS", "max"),
+                Active_No_CER=("DET_ACCUMULATING", lambda x: int(x.sum())),
+            )
+            .reset_index()
+            .sort_values(["Risk_Containers", "Shipments"], ascending=False)
+        )
+        st.dataframe(
+            combo.style.format(
+                {
+                    "Avg_POL_Dem_Days": "{:.1f}",
+                    "Avg_POD_Dem_Days": "{:.1f}",
+                    "Avg_POD_Det_Days": "{:.1f}",
+                    "Max_POD_Det_Days": "{:.1f}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        if len(combo) > 0:
+            top_combo = combo.head(20).copy()
+            heat = (
+                alt.Chart(top_combo)
+                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                .encode(
+                    y=alt.Y("MATCH_KEY:N", sort="-x", title="Missing Contract Key"),
+                    x=alt.X("Risk_Containers:Q", title="Risk Containers"),
+                    tooltip=[
+                        "MATCH_KEY",
+                        "Shipments",
+                        "Risk_Containers",
+                        alt.Tooltip("Avg_POL_Dem_Days:Q", format=".1f"),
+                        alt.Tooltip("Avg_POD_Dem_Days:Q", format=".1f"),
+                        alt.Tooltip("Avg_POD_Det_Days:Q", format=".1f"),
+                    ],
+                )
+                .properties(title="Top Missing Contract Keys by Risk Containers", height=360)
+            )
+            st.altair_chart(heat, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("#### Container-Level Contract Gap Risk")
+        gap_cols = [
+            "CONTAINER_NUMBER",
+            "SHIPMENT_ID",
+            "CARRIER_SCAC",
+            "LANE",
+            "CGI",
+            "CLL",
+            "CDD",
+            "CGO",
+            "CER",
+            "POL_DEM_TOTAL_DAYS",
+            "POD_DEM_TOTAL_DAYS",
+            "POD_DET_TOTAL_DAYS",
+            "DET_ACCUMULATING",
+            "RISK_SCORE",
+            "RISK_REASONS",
+            "MATCH_KEY",
+            "DATA_LIMITATION",
+        ]
+        gap_show = unmatched_df[[c for c in gap_cols if c in unmatched_df.columns]].sort_values(
+            ["RISK_SCORE", "POD_DET_TOTAL_DAYS", "POD_DEM_TOTAL_DAYS", "POL_DEM_TOTAL_DAYS"],
+            ascending=False,
+        ).copy()
+        for dc in ["CGI", "CLL", "CDD", "CGO", "CER"]:
+            if dc in gap_show.columns:
+                gap_show[dc] = pd.to_datetime(gap_show[dc], errors="coerce").dt.strftime("%Y-%m-%d").fillna("—")
+
+        st.dataframe(gap_show, use_container_width=True, hide_index=True, height=520)
+
+# -----------------------------------------------------------------------------
+# TIER EXPOSURE
+# -----------------------------------------------------------------------------
+with tab_tiers:
+    st.markdown("### 🔥 Tier Exposure")
+    st.caption(
+        "This view explains which contractual charge tiers are being hit. Thereafter tier exposure usually indicates severe exceptions."
+    )
+
+    if fdf.empty:
+        st.warning("No matched shipments available for the selected filters.")
+    else:
+        tier_cost_cols = [
+            "POL_DEM_TIER1_COST",
+            "POL_DEM_TIER2_COST",
+            "POL_DEM_THEREAFTER_COST",
+            "POD_DEM_TIER1_COST",
+            "POD_DEM_TIER2_COST",
+            "POD_DEM_THEREAFTER_COST",
+            "POD_DET_TIER1_COST",
+            "POD_DET_TIER2_COST",
+            "POD_DET_THEREAFTER_COST",
+        ]
+        total_tier_cost = fdf[tier_cost_cols].sum().sum()
+        thereafter_cost = fdf[
+            ["POL_DEM_THEREAFTER_COST", "POD_DEM_THEREAFTER_COST", "POD_DET_THEREAFTER_COST"]
+        ].sum().sum()
+        thereafter_containers = (
+            (fdf["POL_DEM_THEREAFTER_COST"] > 0)
+            | (fdf["POD_DEM_THEREAFTER_COST"] > 0)
+            | (fdf["POD_DET_THEREAFTER_COST"] > 0)
+        ).sum()
+
+        top_thereafter_carrier = "—"
+        if thereafter_cost > 0:
+            temp = fdf.copy()
+            temp["THEREAFTER_COST"] = (
+                temp["POL_DEM_THEREAFTER_COST"]
+                + temp["POD_DEM_THEREAFTER_COST"]
+                + temp["POD_DET_THEREAFTER_COST"]
+            )
+            top_thereafter_carrier = temp.groupby("CARRIER_SCAC")["THEREAFTER_COST"].sum().idxmax()
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Tiered Cost", f"${total_tier_cost:,.0f}")
+        c2.metric("Thereafter Cost", f"${thereafter_cost:,.0f}")
+        c3.metric("% in Thereafter", f"{(thereafter_cost / total_tier_cost * 100):.1f}%" if total_tier_cost else "0.0%")
+        c4.metric("Containers Hitting Thereafter", f"{thereafter_containers:,}", str(top_thereafter_carrier))
+
+        st.markdown("---")
+        st.markdown("#### Tier Cost by Charge Type")
+
+        tier_summary = pd.DataFrame(
+            [
+                {
+                    "Charge Type": "POL Demurrage",
+                    "Tier 1 Cost": fdf["POL_DEM_TIER1_COST"].sum(),
+                    "Tier 2 Cost": fdf["POL_DEM_TIER2_COST"].sum(),
+                    "Thereafter Cost": fdf["POL_DEM_THEREAFTER_COST"].sum(),
+                },
+                {
+                    "Charge Type": "POD Demurrage",
+                    "Tier 1 Cost": fdf["POD_DEM_TIER1_COST"].sum(),
+                    "Tier 2 Cost": fdf["POD_DEM_TIER2_COST"].sum(),
+                    "Thereafter Cost": fdf["POD_DEM_THEREAFTER_COST"].sum(),
+                },
+                {
+                    "Charge Type": "POD Detention",
+                    "Tier 1 Cost": fdf["POD_DET_TIER1_COST"].sum(),
+                    "Tier 2 Cost": fdf["POD_DET_TIER2_COST"].sum(),
+                    "Thereafter Cost": fdf["POD_DET_THEREAFTER_COST"].sum(),
+                },
+            ]
+        )
+        tier_melt = tier_summary.melt(id_vars="Charge Type", var_name="Tier", value_name="Cost")
+        ch = (
+            alt.Chart(tier_melt)
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+            .encode(
+                x=alt.X("Charge Type:N", title="Charge Type"),
+                y=alt.Y("Cost:Q", title="Cost (USD)", stack=True),
+                color=alt.Color(
+                    "Tier:N",
+                    scale=alt.Scale(
+                        domain=["Tier 1 Cost", "Tier 2 Cost", "Thereafter Cost"],
+                        range=[TIER1_COLOR, TIER2_COLOR, THEREAFTER_COLOR],
+                    ),
+                ),
+                tooltip=["Charge Type", "Tier", alt.Tooltip("Cost:Q", format="$,.0f")],
+            )
+            .properties(height=330)
         )
         st.altair_chart(ch, use_container_width=True)
 
+        st.markdown("#### Carrier × POD Tier Exposure")
+        tier_cp = fdf.copy()
+        tier_cp["Tier 1 Cost"] = (
+            tier_cp["POL_DEM_TIER1_COST"] + tier_cp["POD_DEM_TIER1_COST"] + tier_cp["POD_DET_TIER1_COST"]
+        )
+        tier_cp["Tier 2 Cost"] = (
+            tier_cp["POL_DEM_TIER2_COST"] + tier_cp["POD_DEM_TIER2_COST"] + tier_cp["POD_DET_TIER2_COST"]
+        )
+        tier_cp["Thereafter Cost"] = (
+            tier_cp["POL_DEM_THEREAFTER_COST"]
+            + tier_cp["POD_DEM_THEREAFTER_COST"]
+            + tier_cp["POD_DET_THEREAFTER_COST"]
+        )
+        tier_cp["Carrier + POD"] = tier_cp["CARRIER_SCAC"].astype(str) + " | " + tier_cp["POD_LOCODE"].astype(str)
+        tier_cp_agg = (
+            tier_cp.groupby("Carrier + POD")
+            .agg(
+                Ships=("SHIPMENT_ID", "count"),
+                Tier_1_Cost=("Tier 1 Cost", "sum"),
+                Tier_2_Cost=("Tier 2 Cost", "sum"),
+                Thereafter_Cost=("Thereafter Cost", "sum"),
+            )
+            .reset_index()
+        )
+        tier_cp_agg["Total"] = tier_cp_agg["Tier_1_Cost"] + tier_cp_agg["Tier_2_Cost"] + tier_cp_agg["Thereafter_Cost"]
+        tier_cp_agg = tier_cp_agg.sort_values("Total", ascending=False).head(30)
+        st.dataframe(
+            tier_cp_agg.style.format(
+                {
+                    "Tier_1_Cost": "${:,.0f}",
+                    "Tier_2_Cost": "${:,.0f}",
+                    "Thereafter_Cost": "${:,.0f}",
+                    "Total": "${:,.0f}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-# ═══════════════════════════════════════════════
-# TAB: DOWNLOAD
-# ═══════════════════════════════════════════════
+        tier_cp_melt = tier_cp_agg.melt(
+            id_vars="Carrier + POD",
+            value_vars=["Tier_1_Cost", "Tier_2_Cost", "Thereafter_Cost"],
+            var_name="Tier",
+            value_name="Cost",
+        )
+        tier_cp_melt["Tier"] = tier_cp_melt["Tier"].replace(
+            {"Tier_1_Cost": "Tier 1", "Tier_2_Cost": "Tier 2", "Thereafter_Cost": "Thereafter"}
+        )
+        ch2 = (
+            alt.Chart(tier_cp_melt)
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+            .encode(
+                y=alt.Y("Carrier + POD:N", sort="-x", title="Carrier + POD"),
+                x=alt.X("Cost:Q", title="Cost (USD)"),
+                color=alt.Color(
+                    "Tier:N",
+                    scale=alt.Scale(domain=["Tier 1", "Tier 2", "Thereafter"], range=[TIER1_COLOR, TIER2_COLOR, THEREAFTER_COLOR]),
+                ),
+                tooltip=["Carrier + POD", "Tier", alt.Tooltip("Cost:Q", format="$,.0f")],
+            )
+            .properties(title="Top Carrier + POD Combinations by Tier Cost", height=500)
+        )
+        st.altair_chart(ch2, use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# DOWNLOAD
+# -----------------------------------------------------------------------------
 with tab_download:
-    st.markdown("#### 📥 Download Shipment-Level D&D Results")
-    st.markdown("Clean, easy-to-read file with human-friendly column names. Ready to share with stakeholders.")
+    st.markdown("### 📥 Download Results")
+    st.markdown("Download matched priced shipments, unmatched contract-gap shipments, and the uploaded contracts.")
 
-    dl_df = build_download_df(fdf)
+    matched_dl = build_download_df(fdf) if not fdf.empty else pd.DataFrame()
+    unmatched_dl = build_unmatched_download_df(unmatched_df) if not unmatched_df.empty else pd.DataFrame()
 
-    st.markdown(f"**Rows:** {len(dl_df)} | **Columns:** {len(dl_df.columns)}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### Matched / Priced Shipments")
+        st.markdown(f"**Rows:** {len(matched_dl)} | **Columns:** {len(matched_dl.columns)}")
+        if not matched_dl.empty:
+            st.dataframe(matched_dl.head(10), use_container_width=True, hide_index=True)
+            csv_bytes = matched_dl.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Download Matched Results CSV",
+                data=csv_bytes,
+                file_name=f"Demurrage_Detention_Matched_Results_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                mime="text/csv",
+            )
 
-    # Preview
-    st.dataframe(dl_df.head(10), use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("#### Contract Gaps / Unmatched Shipments")
+        st.markdown(f"**Rows:** {len(unmatched_dl)} | **Columns:** {len(unmatched_dl.columns)}")
+        if not unmatched_dl.empty:
+            st.dataframe(unmatched_dl.head(10), use_container_width=True, hide_index=True)
+            csv_bytes = unmatched_dl.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Download Contract Gaps CSV",
+                data=csv_bytes,
+                file_name=f"Demurrage_Detention_Contract_Gaps_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                mime="text/csv",
+            )
 
-    # CSV download
-    csv_bytes = dl_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="📥 Download as CSV",
-        data=csv_bytes,
-        file_name=f"BAT_DD_Results_{datetime.now().strftime('%Y-%m-%d')}.csv",
-        mime="text/csv",
-    )
-
-    # Excel download (with fallback if openpyxl not installed)
+    st.markdown("---")
+    st.markdown("#### Excel Workbook")
     try:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            dl_df.to_excel(writer, sheet_name="D&D Results", index=False)
+            if not matched_dl.empty:
+                matched_dl.to_excel(writer, sheet_name="Matched Results", index=False)
+            if not unmatched_dl.empty:
+                unmatched_dl.to_excel(writer, sheet_name="Contract Gaps", index=False)
 
-            # Also write a summary sheet
             summary_data = {
                 "Metric": [
-                    "Total Matched Shipments", "Cancelled Excluded",
-                    "Total D&D Cost", "Total Demurrage", "Total Detention",
-                    "Shipments with Dem Charges", "Shipments with Det Charges",
-                    "Shipments Within Free Days", "Detention Accumulating (no CER)",
+                    "Total Shipments in Upload",
+                    "Cancelled Excluded",
+                    "Matched / Priced Shipments",
+                    "Unmatched Shipments",
+                    "Unmatched Risk Containers",
+                    "Total D&D Cost",
+                    "POL Demurrage",
+                    "POD Demurrage",
+                    "POD Detention",
+                    "Detention Accumulating",
                     "Analysis Date",
                 ],
                 "Value": [
-                    len(fdf), cancelled_count,
-                    f"${fdf['TOTAL_DD_COST'].sum():,.2f}",
-                    f"${fdf['DEM_COST'].sum():,.2f}",
-                    f"${fdf['DET_COST'].sum():,.2f}",
-                    (fdf["DEM_COST"] > 0).sum(),
-                    (fdf["DET_COST"] > 0).sum(),
-                    (fdf["TOTAL_DD_COST"] == 0).sum(),
-                    fdf["DET_ACCUMULATING"].sum(),
+                    total_shipments,
+                    cancelled_count,
+                    len(rdf),
+                    len(unmatched_df),
+                    int(unmatched_df["RISK_FLAG"].sum()) if not unmatched_df.empty else 0,
+                    f"${rdf['TOTAL_DD_COST'].sum():,.2f}" if not rdf.empty else "$0.00",
+                    f"${rdf['POL_DEM_COST'].sum():,.2f}" if not rdf.empty else "$0.00",
+                    f"${rdf['POD_DEM_COST'].sum():,.2f}" if not rdf.empty else "$0.00",
+                    f"${rdf['POD_DET_COST'].sum():,.2f}" if not rdf.empty else "$0.00",
+                    int(rdf["DET_ACCUMULATING"].sum()) if not rdf.empty else 0,
                     datetime.now().strftime("%Y-%m-%d %H:%M"),
                 ],
             }
             pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
 
-            # Contract reference sheet — from uploaded contract data
             contract_display_cols = [
-                "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
-                "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
-                "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
-                "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
-                "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
+                "terminalIdentifier",
+                "carrierScac",
+                "ffwScac",
+                "portOfLoadingLocode",
+                "freeDemurrageDays",
+                "firstDemurrageDays",
+                "firstDemurrageRate",
+                "secondDemurrageDays",
+                "secondDemurrageRate",
+                "thereafterDemurrageRate",
+                "freeDetentionDays",
+                "firstDetentionDays",
+                "firstDetentionRate",
+                "secondDetentionDays",
+                "secondDetentionRate",
+                "thereafterDetentionRate",
                 "combinedFreeDays",
             ]
             existing_contract_cols = [c for c in contract_display_cols if c in contracts_df.columns]
             contracts_df[existing_contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
 
         st.download_button(
-            label="📥 Download as Excel (3 sheets: Results + Summary + Contracts)",
+            label="📥 Download Excel Workbook",
             data=buffer.getvalue(),
-            file_name=f"BAT_DD_Results_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            file_name=f"Demurrage_Detention_Analyzer_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     except ImportError:
-        st.info("Excel download requires openpyxl. Add `openpyxl` to requirements.txt, or use the CSV download above.")
-
-    st.markdown("---")
-    st.markdown("**Download contains 3 sheets:**")
-    st.markdown("1. **D&D Results** — Every matched shipment with charges, dates, free days, and costs")
-    st.markdown("2. **Summary** — KPI snapshot (total costs, counts, analysis date)")
-    st.markdown("3. **Contracts** — Contract terms used for calculation (from uploaded file)")
-
-
-# ═══════════════════════════════════════════════
-# TAB: LOGIC
-# ═══════════════════════════════════════════════
-with tab_logic:
-    st.markdown("### Calculation Logic")
-
-    st.markdown("#### D&D Formulas")
-    st.code(
-        "Demurrage = [(Gate Out Full from POD - Discharge at POD) - Free Days] x Tiered Rate\n"
-        "Detention  = [(Container Empty Return - Gate Out Full from POD) - Free Days] x Tiered Rate",
-        language=None,
-    )
-
-    st.markdown("#### Exclusion Rule (all shipments)")
-    st.code(
-        "SUBSCRIPTION_STATUS = CANCELLED  -> Shipment excluded from D&D entirely",
-        language=None,
-    )
-
-    st.markdown("#### No CER Handling (when CER is missing)")
-    st.code(
-        "SUBSCRIPTION_STATUS = ACTIVE    + no CER -> Detention accumulates to TODAY (analysis run time)\n"
-        "SUBSCRIPTION_STATUS = COMPLETED + no CER -> Detention end = SHIPMENT_MODIFIED_DATE",
-        language=None,
-    )
-
-    st.markdown("#### Tiered Rate Structure")
-    st.code(
-        "Days 1 to Tier1_days          -> Tier1_rate per day\n"
-        "Days (Tier1+1) to (Tier1+Tier2) -> Tier2_rate per day\n"
-        "Beyond                          -> Thereafter_rate per day",
-        language=None,
-    )
-
-    st.markdown("#### Combined Free Days")
-    st.code(
-        "Combined free days are consumed continuously from discharge date.\n"
-        "DEM applies while container is in terminal (CDD to CGO).\n"
-        "DET applies after gate out (CGO to CER).\n"
-        "Charges apply only after free days are exhausted, based on location.\n"
-        "\n"
-        "Example 1: 21 combined free, 25 days at terminal\n"
-        "  DEM chargeable = 25 - 21 = 4 days (free pool exhausted at terminal)\n"
-        "  DET gets 0 remaining free → charges from day 1 after gate out\n"
-        "\n"
-        "Example 2: 21 combined free, 9 days at terminal, 15 days after gate out\n"
-        "  DEM chargeable = 0 (9 < 21, within free)\n"
-        "  Remaining free for DET = 21 - 9 = 12 days\n"
-        "  DET chargeable = 15 - 12 = 3 days",
-        language=None,
-    )
-
-    st.markdown("#### Contract Matching")
-    st.code(
-        "Match Key = POD_LOCODE | CARRIER_SCAC | POL_LOCODE\n"
-        "Fallback  = POD_LOCODE | FFW_SCAC | POL_LOCODE",
-        language=None,
-    )
-
-    st.markdown("#### Milestone Chain")
-    st.code(
-        "CEP -> CGI -> CLL -> VDL -> VAD -> CDD -> CGO -> CER\n"
-        "─────────────────────────────────────────────────────\n"
-        "CEP = Container Empty Pickup\n"
-        "CGI = Container Gate In (at POL)\n"
-        "CLL = Container Loaded on Vessel\n"
-        "VDL = Vessel Departure from Load Port\n"
-        "VAD = Vessel Arrival at Discharge Port\n"
-        "CDD = Container Discharge at POD    <- Demurrage starts\n"
-        "CGO = Gate Out Full from POD         <- Demurrage ends / Detention starts\n"
-        "CER = Container Empty Return         <- Detention ends\n"
-        "\n"
-        "If CER missing:\n"
-        "  ACTIVE    -> detention end = today\n"
-        "  COMPLETED -> detention end = SHIPMENT_MODIFIED_DATE\n"
-        "\n"
-        "CANCELLED shipments -> excluded from all calculations",
-        language=None,
-    )
-
-    st.markdown("---")
-    st.markdown("#### Contract Table (Uploaded)")
-    contract_display_cols = [
-        "terminalIdentifier", "carrierScac", "ffwScac", "portOfLoadingLocode",
-        "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
-        "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
-        "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
-        "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
-        "combinedFreeDays",
-    ]
-    existing_contract_cols = [c for c in contract_display_cols if c in contracts_df.columns]
-    st.dataframe(contracts_df[existing_contract_cols], use_container_width=True, hide_index=True, height=400)
+        st.info("Excel download requires openpyxl. Add openpyxl to requirements.txt, or use CSV downloads above.")
