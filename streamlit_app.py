@@ -403,6 +403,7 @@ def process_shipments(df, contracts_list):
             "CGO": cgo if not pd.isna(cgo) else pd.NaT,
             "CER": cer if not pd.isna(cer) else pd.NaT,
             "DET_END_TS": det_end_ts,
+            "DD_ANCHOR_DATE": cdd if not pd.isna(cdd) else (cgo if not pd.isna(cgo) else (cer if not pd.isna(cer) else (cll if not pd.isna(cll) else cgi))),
             "POL_DEM_TOTAL_DAYS": round(pol_dem_total_days, 2) if pol_dem_total_days is not None else None,
             "POD_DEM_TOTAL_DAYS": round(pod_dem_total_days, 2) if pod_dem_total_days is not None else None,
             "POD_DET_TOTAL_DAYS": round(pod_det_total_days, 2) if pod_det_total_days is not None else None,
@@ -829,42 +830,79 @@ if rdf.empty and unmatched_df.empty:
 # -----------------------------------------------------------------------------
 # SIDEBAR FILTERS
 # -----------------------------------------------------------------------------
+# Ensure the trend/date anchor exists for older processed rows.
+for _df in [rdf, unmatched_df]:
+    if not _df.empty:
+        if "DD_ANCHOR_DATE" not in _df.columns:
+            _df["DD_ANCHOR_DATE"] = pd.NaT
+        _df["DD_ANCHOR_DATE"] = pd.to_datetime(_df["DD_ANCHOR_DATE"], errors="coerce", utc=True)
+
 with st.sidebar:
     st.markdown("---")
     st.markdown("### Filters")
 
-    if not rdf.empty:
-        carriers = sorted(rdf["CARRIER_SCAC"].dropna().unique())
-        pods = sorted(rdf["POD_LOCODE"].dropna().unique())
-    else:
-        carriers = []
-        pods = []
+    combined_for_filters = pd.concat(
+        [
+            rdf[["CARRIER_SCAC", "POD_LOCODE", "POL_LOCODE", "DD_ANCHOR_DATE"]] if not rdf.empty else pd.DataFrame(),
+            unmatched_df[["CARRIER_SCAC", "POD_LOCODE", "POL_LOCODE", "DD_ANCHOR_DATE"]] if not unmatched_df.empty else pd.DataFrame(),
+        ],
+        ignore_index=True,
+    )
+
+    carriers = sorted(combined_for_filters.get("CARRIER_SCAC", pd.Series(dtype=str)).dropna().astype(str).unique())
+    pods = sorted(combined_for_filters.get("POD_LOCODE", pd.Series(dtype=str)).dropna().astype(str).unique())
+    pols = sorted(combined_for_filters.get("POL_LOCODE", pd.Series(dtype=str)).dropna().astype(str).unique())
 
     sel_carriers = st.multiselect("Carrier", carriers, default=carriers)
     sel_pods = st.multiselect("POD Terminal", pods, default=pods)
+    sel_pols = st.multiselect("POL", pols, default=pols)
     show_zero = st.checkbox("Include $0 charge shipments", value=True)
 
-if not rdf.empty:
-    fdf = rdf[rdf["CARRIER_SCAC"].isin(sel_carriers) & rdf["POD_LOCODE"].isin(sel_pods)].copy()
-    if not show_zero:
-        fdf = fdf[fdf["TOTAL_DD_COST"] > 0]
-else:
-    fdf = rdf.copy()
+    st.markdown("### Time Filters")
+    trend_grain = st.radio("Trend View", ["Weekly", "Monthly"], horizontal=True)
 
-# For unmatched, only apply filters if selected options exist; otherwise show all unmatched.
-if not unmatched_df.empty and sel_carriers and sel_pods:
-    ufdf = unmatched_df[
-        unmatched_df["CARRIER_SCAC"].isin(sel_carriers) | unmatched_df["POD_LOCODE"].isin(sel_pods)
-    ].copy()
-else:
-    ufdf = unmatched_df.copy()
+    valid_dates = combined_for_filters["DD_ANCHOR_DATE"].dropna() if "DD_ANCHOR_DATE" in combined_for_filters.columns else pd.Series(dtype="datetime64[ns, UTC]")
+    if not valid_dates.empty:
+        min_date = valid_dates.min().date()
+        max_date = valid_dates.max().date()
+        date_range = st.date_input(
+            "D&D Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+        )
+    else:
+        date_range = None
+        st.caption("No valid D&D anchor dates found for date filtering.")
+
+def apply_common_filters(data, require_cost_filter=False):
+    if data.empty:
+        return data.copy()
+    out = data.copy()
+    if sel_carriers:
+        out = out[out["CARRIER_SCAC"].astype(str).isin(sel_carriers)]
+    if sel_pods:
+        out = out[out["POD_LOCODE"].astype(str).isin(sel_pods)]
+    if sel_pols:
+        out = out[out["POL_LOCODE"].astype(str).isin(sel_pols)]
+    if date_range and len(date_range) == 2 and "DD_ANCHOR_DATE" in out.columns:
+        start_date, end_date = date_range
+        anchor = pd.to_datetime(out["DD_ANCHOR_DATE"], errors="coerce", utc=True)
+        out = out[(anchor.dt.date >= start_date) & (anchor.dt.date <= end_date)]
+    if require_cost_filter and not show_zero and "TOTAL_DD_COST" in out.columns:
+        out = out[out["TOTAL_DD_COST"] > 0]
+    return out
+
+fdf = apply_common_filters(rdf, require_cost_filter=True) if not rdf.empty else rdf.copy()
+ufdf = apply_common_filters(unmatched_df, require_cost_filter=False) if not unmatched_df.empty else unmatched_df.copy()
 
 # -----------------------------------------------------------------------------
 # TABS
 # -----------------------------------------------------------------------------
-tab_overview, tab_carrier, tab_port, tab_ships, tab_gaps, tab_tiers, tab_download = st.tabs(
+tab_overview, tab_trends, tab_carrier, tab_port, tab_ships, tab_gaps, tab_tiers, tab_download = st.tabs(
     [
         "📊 Overview",
+        "📈 Trends",
         "🚛 Carriers",
         "🏗️ Ports & Lanes",
         "📦 Shipments",
@@ -1002,6 +1040,219 @@ with tab_overview:
             .properties(title="D&D Cost by POD Terminal", height=250)
         )
         st.altair_chart(chart_pod, use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# TRENDS
+# -----------------------------------------------------------------------------
+with tab_trends:
+    st.markdown("### D&D Trends")
+    st.caption(
+        "Trend date uses CDD when available, then CGO, then CER, then CLL/CGI as fallback. "
+        "Use the sidebar to switch between weekly and monthly views."
+    )
+
+    if fdf.empty:
+        st.warning("No matched/priced shipments available for the selected filters.")
+    else:
+        trend_df = fdf.copy()
+        trend_df["DD_ANCHOR_DATE"] = pd.to_datetime(trend_df["DD_ANCHOR_DATE"], errors="coerce", utc=True)
+        trend_df = trend_df.dropna(subset=["DD_ANCHOR_DATE"])
+
+        if trend_df.empty:
+            st.warning("No valid D&D anchor dates found for the selected filters.")
+        else:
+            if trend_grain == "Weekly":
+                trend_df["PERIOD"] = trend_df["DD_ANCHOR_DATE"].dt.to_period("W").apply(lambda r: r.start_time)
+                period_title = "Week"
+            else:
+                trend_df["PERIOD"] = trend_df["DD_ANCHOR_DATE"].dt.to_period("M").apply(lambda r: r.start_time)
+                period_title = "Month"
+
+            trend_agg = (
+                trend_df.groupby("PERIOD")
+                .agg(
+                    Shipments=("SHIPMENT_ID", "count"),
+                    POL_Demurrage=("POL_DEM_COST", "sum"),
+                    POD_Demurrage=("POD_DEM_COST", "sum"),
+                    Detention=("POD_DET_COST", "sum"),
+                    Total=("TOTAL_DD_COST", "sum"),
+                    Avg_POL_Dem_Days=("POL_DEM_CHARGEABLE_DAYS", "mean"),
+                    Avg_POD_Dem_Days=("POD_DEM_CHARGEABLE_DAYS", "mean"),
+                    Avg_Det_Days=("POD_DET_CHARGEABLE_DAYS", "mean"),
+                    Accumulating=("DET_ACCUMULATING", "sum"),
+                )
+                .reset_index()
+                .sort_values("PERIOD")
+            )
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Periods", f"{len(trend_agg):,}")
+            c2.metric("Total Cost", f"${trend_agg['Total'].sum():,.0f}")
+            c3.metric("Avg Cost / Shipment", f"${(trend_agg['Total'].sum() / max(trend_agg['Shipments'].sum(), 1)):,.0f}")
+            c4.metric("Accumulating", f"{int(trend_agg['Accumulating'].sum()):,}", "ACTIVE, no CER")
+
+            st.markdown("#### Cost Trend")
+            cost_melt = trend_agg.melt(
+                id_vars=["PERIOD"],
+                value_vars=["POL_Demurrage", "POD_Demurrage", "Detention"],
+                var_name="Charge Type",
+                value_name="Cost",
+            )
+            cost_melt["Charge Type"] = cost_melt["Charge Type"].replace(
+                {"POL_Demurrage": "POL Demurrage", "POD_Demurrage": "POD Demurrage"}
+            )
+            cost_chart = (
+                alt.Chart(cost_melt)
+                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                .encode(
+                    x=alt.X("PERIOD:T", title=period_title),
+                    y=alt.Y("Cost:Q", title="Cost"),
+                    color=alt.Color(
+                        "Charge Type:N",
+                        scale=alt.Scale(
+                            domain=["POL Demurrage", "POD Demurrage", "Detention"],
+                            range=[POL_DEM_COLOR, DEM_COLOR, DET_COLOR],
+                        ),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("PERIOD:T", title=period_title),
+                        "Charge Type:N",
+                        alt.Tooltip("Cost:Q", format="$,.0f"),
+                    ],
+                )
+                .properties(height=350)
+            )
+            st.altair_chart(cost_chart, use_container_width=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### Shipment Volume")
+                shipment_chart = (
+                    alt.Chart(trend_agg)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("PERIOD:T", title=period_title),
+                        y=alt.Y("Shipments:Q", title="Shipments"),
+                        tooltip=[alt.Tooltip("PERIOD:T", title=period_title), "Shipments"],
+                    )
+                    .properties(height=280)
+                )
+                st.altair_chart(shipment_chart, use_container_width=True)
+
+            with col2:
+                st.markdown("#### Avg Chargeable Days")
+                days_melt = trend_agg.melt(
+                    id_vars=["PERIOD"],
+                    value_vars=["Avg_POL_Dem_Days", "Avg_POD_Dem_Days", "Avg_Det_Days"],
+                    var_name="Metric",
+                    value_name="Days",
+                )
+                days_melt["Metric"] = days_melt["Metric"].replace(
+                    {
+                        "Avg_POL_Dem_Days": "POL Demurrage",
+                        "Avg_POD_Dem_Days": "POD Demurrage",
+                        "Avg_Det_Days": "Detention",
+                    }
+                )
+                days_chart = (
+                    alt.Chart(days_melt)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("PERIOD:T", title=period_title),
+                        y=alt.Y("Days:Q", title="Avg Chargeable Days"),
+                        color=alt.Color(
+                            "Metric:N",
+                            scale=alt.Scale(
+                                domain=["POL Demurrage", "POD Demurrage", "Detention"],
+                                range=[POL_DEM_COLOR, DEM_COLOR, DET_COLOR],
+                            ),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("PERIOD:T", title=period_title),
+                            "Metric:N",
+                            alt.Tooltip("Days:Q", format=".1f"),
+                        ],
+                    )
+                    .properties(height=280)
+                )
+                st.altair_chart(days_chart, use_container_width=True)
+
+            st.markdown("#### Trend Summary")
+            st.dataframe(
+                trend_agg.style.format(
+                    {
+                        "POL_Demurrage": "${:,.0f}",
+                        "POD_Demurrage": "${:,.0f}",
+                        "Detention": "${:,.0f}",
+                        "Total": "${:,.0f}",
+                        "Avg_POL_Dem_Days": "{:.1f}",
+                        "Avg_POD_Dem_Days": "{:.1f}",
+                        "Avg_Det_Days": "{:.1f}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.markdown("---")
+    st.markdown("### Contract Gap Trend")
+    if ufdf.empty:
+        st.info("No unmatched/contract-gap shipments for the selected filters.")
+    else:
+        gap_trend = ufdf.copy()
+        gap_trend["DD_ANCHOR_DATE"] = pd.to_datetime(gap_trend["DD_ANCHOR_DATE"], errors="coerce", utc=True)
+        gap_trend = gap_trend.dropna(subset=["DD_ANCHOR_DATE"])
+        if gap_trend.empty:
+            st.info("Contract-gap shipments do not have valid anchor dates for trend analysis.")
+        else:
+            if trend_grain == "Weekly":
+                gap_trend["PERIOD"] = gap_trend["DD_ANCHOR_DATE"].dt.to_period("W").apply(lambda r: r.start_time)
+                period_title = "Week"
+            else:
+                gap_trend["PERIOD"] = gap_trend["DD_ANCHOR_DATE"].dt.to_period("M").apply(lambda r: r.start_time)
+                period_title = "Month"
+
+            gap_agg = (
+                gap_trend.groupby("PERIOD")
+                .agg(
+                    Unmatched_Shipments=("SHIPMENT_ID", "count"),
+                    Risk_Shipments=("RISK_FLAG", "sum"),
+                    Missing_Contract_Keys=("MATCH_KEY", "nunique"),
+                    Avg_POL_Dem_Days=("POL_DEM_TOTAL_DAYS", "mean"),
+                    Avg_POD_Dem_Days=("POD_DEM_TOTAL_DAYS", "mean"),
+                    Avg_POD_Det_Days=("POD_DET_TOTAL_DAYS", "mean"),
+                )
+                .reset_index()
+                .sort_values("PERIOD")
+            )
+
+            gap_chart = (
+                alt.Chart(gap_agg)
+                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                .encode(
+                    x=alt.X("PERIOD:T", title=period_title),
+                    y=alt.Y("Unmatched_Shipments:Q", title="Unmatched Shipments"),
+                    tooltip=[
+                        alt.Tooltip("PERIOD:T", title=period_title),
+                        "Unmatched_Shipments:Q",
+                        "Risk_Shipments:Q",
+                        "Missing_Contract_Keys:Q",
+                    ],
+                )
+                .properties(height=260)
+            )
+            st.altair_chart(gap_chart, use_container_width=True)
+            st.dataframe(
+                gap_agg.style.format(
+                    {
+                        "Avg_POL_Dem_Days": "{:.1f}",
+                        "Avg_POD_Dem_Days": "{:.1f}",
+                        "Avg_POD_Det_Days": "{:.1f}",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 # -----------------------------------------------------------------------------
 # CARRIERS
