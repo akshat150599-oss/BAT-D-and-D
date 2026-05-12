@@ -461,12 +461,57 @@ def make_estimate_contract_profile(
     }
 
 
+def _first_existing_column(df, candidates):
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def _clean_scac(val):
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(val).strip()
+
+
+def _shipment_match_identity(row):
+    """Prefer shipment carrier SCAC; if blank, fall back to shipment freight-forwarder SCAC."""
+    carrier = _clean_scac(row.get("CARRIER_SCAC", ""))
+    ffw = _clean_scac(row.get("FFW_SCAC", ""))
+    if carrier:
+        return carrier, "Carrier"
+    if ffw:
+        return ffw, "FFW"
+    return "", "Missing"
+
+
 def normalize_required_columns(df):
+    # Normalize shipment-side freight forwarder into FFW_SCAC if the export uses a different name.
+    ffw_aliases = [
+        "FFW_SCAC",
+        "FFW",
+        "FFW_SCAC_CODE",
+        "FREIGHT_FORWARDER_SCAC",
+        "FREIGHT_FORWARDER",
+        "FORWARDER_SCAC",
+        "FORWARDER",
+        "FREIGHT_FORWARDER_CODE",
+    ]
+    ffw_col = _first_existing_column(df, ffw_aliases)
+    if ffw_col is not None and ffw_col != "FFW_SCAC":
+        df["FFW_SCAC"] = df[ffw_col]
+
     for col in [
         "SHIPMENT_ID",
         "CONTAINER_NUMBER",
         "CARRIER_SCAC",
         "CARRIER_NAME",
+        "FFW_SCAC",
         "POL_LOCODE",
         "POL",
         "POD_LOCODE",
@@ -533,10 +578,13 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
     original_count = len(df)
     df = df[df["SUBSCRIPTION_STATUS"] != "CANCELLED"].copy()
 
+    match_identity = df.apply(_shipment_match_identity, axis=1, result_type="expand")
+    df["CARRIER_FFW_SCAC"] = match_identity[0]
+    df["MATCHED_PARTY_TYPE"] = match_identity[1]
     df["_match_key"] = (
         df["POD_LOCODE"].fillna("").astype(str).str.strip()
         + "|"
-        + df["CARRIER_SCAC"].fillna("").astype(str).str.strip()
+        + df["CARRIER_FFW_SCAC"].fillna("").astype(str).str.strip()
         + "|"
         + df["POL_LOCODE"].fillna("").astype(str).str.strip()
     )
@@ -585,6 +633,9 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
             "CONTAINER_NUMBER": row.get("CONTAINER_NUMBER", ""),
             "CARRIER_SCAC": row["CARRIER_SCAC"],
             "CARRIER_NAME": row.get("CARRIER_NAME", ""),
+            "FFW_SCAC": row.get("FFW_SCAC", ""),
+            "CARRIER_FFW_SCAC": row.get("CARRIER_FFW_SCAC", ""),
+            "MATCHED_PARTY_TYPE": row.get("MATCHED_PARTY_TYPE", ""),
             "POL_LOCODE": row["POL_LOCODE"],
             "POL": row.get("POL", ""),
             "POD_LOCODE": row["POD_LOCODE"],
@@ -831,6 +882,12 @@ def build_download_df(data):
         "CONTAINER_NUMBER": "Container",
         "CARRIER_SCAC": "Carrier SCAC",
         "CARRIER_NAME": "Carrier Name",
+        "FFW_SCAC": "Freight Forwarder SCAC",
+        "CARRIER_FFW_SCAC": "Carrier / FFW SCAC",
+        "MATCHED_PARTY_TYPE": "Matched Party Type",
+        "FFW_SCAC": "Freight Forwarder SCAC",
+        "CARRIER_FFW_SCAC": "Carrier / FFW SCAC",
+        "MATCHED_PARTY_TYPE": "Matched Party Type",
         "POL_LOCODE": "Port of Loading",
         "POD_LOCODE": "Port of Discharge",
         "LANE": "Lane",
@@ -870,6 +927,9 @@ def build_download_df(data):
         "Container",
         "Carrier SCAC",
         "Carrier Name",
+        "Freight Forwarder SCAC",
+        "Carrier / FFW SCAC",
+        "Matched Party Type",
         "Lane",
         "Port of Loading",
         "Port of Discharge",
@@ -1130,17 +1190,17 @@ with st.sidebar:
 
     combined_for_filters = pd.concat(
         [
-            rdf[["CARRIER_SCAC", "POD_LOCODE", "POL_LOCODE", "DD_ANCHOR_DATE"]] if not rdf.empty else pd.DataFrame(),
-            unmatched_df[["CARRIER_SCAC", "POD_LOCODE", "POL_LOCODE", "DD_ANCHOR_DATE"]] if not unmatched_df.empty else pd.DataFrame(),
+            rdf[["CARRIER_SCAC", "FFW_SCAC", "CARRIER_FFW_SCAC", "POD_LOCODE", "POL_LOCODE", "DD_ANCHOR_DATE"]] if not rdf.empty else pd.DataFrame(),
+            unmatched_df[["CARRIER_SCAC", "FFW_SCAC", "CARRIER_FFW_SCAC", "POD_LOCODE", "POL_LOCODE", "DD_ANCHOR_DATE"]] if not unmatched_df.empty else pd.DataFrame(),
         ],
         ignore_index=True,
     )
 
-    carriers = sorted(combined_for_filters.get("CARRIER_SCAC", pd.Series(dtype=str)).dropna().astype(str).unique())
+    carriers = sorted(combined_for_filters.get("CARRIER_FFW_SCAC", pd.Series(dtype=str)).dropna().astype(str).unique())
     pods = sorted(combined_for_filters.get("POD_LOCODE", pd.Series(dtype=str)).dropna().astype(str).unique())
     pols = sorted(combined_for_filters.get("POL_LOCODE", pd.Series(dtype=str)).dropna().astype(str).unique())
 
-    sel_carriers = st.multiselect("Carrier", carriers, default=carriers)
+    sel_carriers = st.multiselect("Carrier / FFW", carriers, default=carriers)
     sel_pods = st.multiselect("POD Terminal", pods, default=pods)
     sel_pols = st.multiselect("POL", pols, default=pols)
     show_zero = st.checkbox("Include $0 charge shipments", value=True)
@@ -1166,8 +1226,8 @@ def apply_common_filters(data, require_cost_filter=False):
     if data.empty:
         return data.copy()
     out = data.copy()
-    if sel_carriers:
-        out = out[out["CARRIER_SCAC"].astype(str).isin(sel_carriers)]
+    if sel_carriers and "CARRIER_FFW_SCAC" in out.columns:
+        out = out[out["CARRIER_FFW_SCAC"].astype(str).isin(sel_carriers)]
     if sel_pods:
         out = out[out["POD_LOCODE"].astype(str).isin(sel_pods)]
     if sel_pols:
@@ -1190,7 +1250,7 @@ tab_overview, tab_trends, tab_carrier, tab_port, tab_ships, tab_gaps, tab_tiers,
     [
         "📊 Overview",
         "📈 Trends",
-        "🚛 Carriers",
+        "🚛 Carrier / FFW",
         "🏗️ Ports & Lanes",
         "📦 Shipments",
         "⚠️ Contract Gaps",
@@ -1252,10 +1312,10 @@ with tab_overview:
             st.caption(f"ℹ️ {cancelled_count} cancelled shipments excluded from analysis.")
 
         st.markdown("---")
-        st.caption("💡 Cost split by carrier. Blue = POL demurrage, orange = POD demurrage, purple = POD detention.")
+        st.caption("💡 Cost split by carrier / freight forwarder. Blue = POL demurrage, orange = POD demurrage, purple = POD detention.")
 
         carrier_agg = (
-            fdf.groupby("CARRIER_SCAC")
+            fdf.groupby("CARRIER_FFW_SCAC")
             .agg(
                 POL_Demurrage=("POL_DEM_COST", "sum"),
                 POD_Demurrage=("POD_DEM_COST", "sum"),
@@ -1263,7 +1323,7 @@ with tab_overview:
             )
             .reset_index()
         )
-        carrier_melt = carrier_agg.melt(id_vars="CARRIER_SCAC", var_name="Type", value_name="Cost")
+        carrier_melt = carrier_agg.melt(id_vars="CARRIER_FFW_SCAC", var_name="Type", value_name="Cost")
         carrier_melt["Type"] = carrier_melt["Type"].replace(
             {
                 "POL_Demurrage": "POL Demurrage",
@@ -1276,7 +1336,7 @@ with tab_overview:
             alt.Chart(carrier_melt)
             .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
             .encode(
-                y=alt.Y("CARRIER_SCAC:N", sort="-x", title="Carrier"),
+                y=alt.Y("CARRIER_FFW_SCAC:N", sort="-x", title="Carrier / FFW"),
                 x=alt.X("Cost:Q", title="Cost (USD)"),
                 color=alt.Color(
                     "Type:N",
@@ -1285,9 +1345,9 @@ with tab_overview:
                         range=[POL_DEM_COLOR, DEM_COLOR, DET_COLOR],
                     ),
                 ),
-                tooltip=["CARRIER_SCAC", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
+                tooltip=["CARRIER_FFW_SCAC", "Type", alt.Tooltip("Cost:Q", format="$,.0f")],
             )
-            .properties(title="D&D Cost by Carrier", height=280)
+            .properties(title="D&D Cost by Carrier / FFW", height=280)
         )
         st.altair_chart(chart_carrier, use_container_width=True)
 
@@ -1545,13 +1605,13 @@ with tab_trends:
 # CARRIERS
 # -----------------------------------------------------------------------------
 with tab_carrier:
-    st.markdown("### Carrier Summary")
+    st.markdown("### Carrier / FFW Summary")
 
     if fdf.empty:
         st.warning("No matched shipments available for the selected filters.")
     else:
         carrier_detail = (
-            fdf.groupby(["CARRIER_SCAC", "CARRIER_NAME"])
+            fdf.groupby(["CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "CARRIER_SCAC", "FFW_SCAC", "CARRIER_NAME"])
             .agg(
                 Ships=("SHIPMENT_ID", "count"),
                 POL_Dem_Ships=("POL_DEM_COST", lambda x: (x > 0).sum()),
@@ -1588,9 +1648,9 @@ with tab_carrier:
         )
 
         st.markdown("---")
-        st.markdown("#### Carrier × POD Breakdown")
+        st.markdown("#### Carrier / FFW × POD Breakdown")
         cp = (
-            fdf.groupby(["CARRIER_SCAC", "POD_LOCODE"])
+            fdf.groupby(["CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "POD_LOCODE"])
             .agg(
                 Ships=("SHIPMENT_ID", "count"),
                 POL_Dem=("POL_DEM_COST", "sum"),
@@ -1608,10 +1668,11 @@ with tab_carrier:
                 .mark_rect(cornerRadius=4)
                 .encode(
                     x=alt.X("POD_LOCODE:N", title="POD"),
-                    y=alt.Y("CARRIER_SCAC:N", title="Carrier"),
+                    y=alt.Y("CARRIER_FFW_SCAC:N", title="Carrier / FFW"),
                     color=alt.Color("Total:Q", scale=alt.Scale(scheme="oranges"), title="Total D&D"),
                     tooltip=[
-                        "CARRIER_SCAC",
+                        "CARRIER_FFW_SCAC",
+                        "MATCHED_PARTY_TYPE",
                         "POD_LOCODE",
                         "Ships",
                         alt.Tooltip("POL_Dem:Q", format="$,.0f"),
@@ -1620,7 +1681,7 @@ with tab_carrier:
                         alt.Tooltip("Total:Q", format="$,.0f"),
                     ],
                 )
-                .properties(title="Cost Heatmap: Carrier × POD", height=280)
+                .properties(title="Cost Heatmap: Carrier / FFW × POD", height=280)
             )
             text = heat.mark_text(fontSize=11, fontWeight="bold").encode(
                 text=alt.Text("Total:Q", format="$,.0f"),
@@ -1704,7 +1765,9 @@ with tab_port:
             fdf.groupby("LANE")
             .agg(
                 Ships=("SHIPMENT_ID", "count"),
-                Carriers=("CARRIER_SCAC", lambda x: ", ".join(sorted(x.dropna().unique()))),
+                Carrier_FFWs=("CARRIER_FFW_SCAC", lambda x: ", ".join(sorted(x.dropna().astype(str).unique()))),
+                Carriers=("CARRIER_SCAC", lambda x: ", ".join(sorted([v for v in x.dropna().astype(str).unique() if v.strip()]))),
+                Freight_Forwarders=("FFW_SCAC", lambda x: ", ".join(sorted([v for v in x.dropna().astype(str).unique() if v.strip()]))),
                 POL_Dem=("POL_DEM_COST", "sum"),
                 POD_Dem=("POD_DEM_COST", "sum"),
                 Det=("POD_DET_COST", "sum"),
@@ -1751,6 +1814,9 @@ with tab_ships:
             "CONTAINER_NUMBER",
             "SHIPMENT_ID",
             "CARRIER_SCAC",
+            "FFW_SCAC",
+            "CARRIER_FFW_SCAC",
+            "MATCHED_PARTY_TYPE",
             "LANE",
             "CGI",
             "CLL",
@@ -1868,7 +1934,7 @@ with tab_gaps:
         st.markdown("---")
         st.markdown("#### Missing Contract Combinations")
         combo = (
-            unmatched_df.groupby(["POD_LOCODE", "CARRIER_SCAC", "POL_LOCODE", "MATCH_KEY"])
+            unmatched_df.groupby(["POD_LOCODE", "CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "CARRIER_SCAC", "FFW_SCAC", "POL_LOCODE", "MATCH_KEY"])
             .agg(
                 Shipments=("SHIPMENT_ID", "count"),
                 Containers=("CONTAINER_NUMBER", lambda x: x.nunique()),
@@ -1922,6 +1988,9 @@ with tab_gaps:
             "CONTAINER_NUMBER",
             "SHIPMENT_ID",
             "CARRIER_SCAC",
+            "FFW_SCAC",
+            "CARRIER_FFW_SCAC",
+            "MATCHED_PARTY_TYPE",
             "LANE",
             "CGI",
             "CLL",
@@ -1988,7 +2057,7 @@ with tab_tiers:
                 + temp["POD_DEM_THEREAFTER_COST"]
                 + temp["POD_DET_THEREAFTER_COST"]
             )
-            top_thereafter_carrier = temp.groupby("CARRIER_SCAC")["THEREAFTER_COST"].sum().idxmax()
+            top_thereafter_carrier = temp.groupby("CARRIER_FFW_SCAC")["THEREAFTER_COST"].sum().idxmax()
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Tiered Cost", f"${total_tier_cost:,.0f}")
@@ -2041,7 +2110,7 @@ with tab_tiers:
         )
         st.altair_chart(ch, use_container_width=True)
 
-        st.markdown("#### Carrier × POD Tier Exposure")
+        st.markdown("#### Carrier / FFW × POD Tier Exposure")
         tier_cp = fdf.copy()
         tier_cp["Tier 1 Cost"] = (
             tier_cp["POL_DEM_TIER1_COST"] + tier_cp["POD_DEM_TIER1_COST"] + tier_cp["POD_DET_TIER1_COST"]
@@ -2054,9 +2123,9 @@ with tab_tiers:
             + tier_cp["POD_DEM_THEREAFTER_COST"]
             + tier_cp["POD_DET_THEREAFTER_COST"]
         )
-        tier_cp["Carrier + POD"] = tier_cp["CARRIER_SCAC"].astype(str) + " | " + tier_cp["POD_LOCODE"].astype(str)
+        tier_cp["Carrier / FFW + POD"] = tier_cp["CARRIER_FFW_SCAC"].astype(str) + " | " + tier_cp["POD_LOCODE"].astype(str)
         tier_cp_agg = (
-            tier_cp.groupby("Carrier + POD")
+            tier_cp.groupby("Carrier / FFW + POD")
             .agg(
                 Ships=("SHIPMENT_ID", "count"),
                 Tier_1_Cost=("Tier 1 Cost", "sum"),
@@ -2081,7 +2150,7 @@ with tab_tiers:
         )
 
         tier_cp_melt = tier_cp_agg.melt(
-            id_vars="Carrier + POD",
+            id_vars="Carrier / FFW + POD",
             value_vars=["Tier_1_Cost", "Tier_2_Cost", "Thereafter_Cost"],
             var_name="Tier",
             value_name="Cost",
@@ -2093,15 +2162,15 @@ with tab_tiers:
             alt.Chart(tier_cp_melt)
             .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
             .encode(
-                y=alt.Y("Carrier + POD:N", sort="-x", title="Carrier + POD"),
+                y=alt.Y("Carrier / FFW + POD:N", sort="-x", title="Carrier / FFW + POD"),
                 x=alt.X("Cost:Q", title="Cost (USD)"),
                 color=alt.Color(
                     "Tier:N",
                     scale=alt.Scale(domain=["Tier 1", "Tier 2", "Thereafter"], range=[TIER1_COLOR, TIER2_COLOR, THEREAFTER_COLOR]),
                 ),
-                tooltip=["Carrier + POD", "Tier", alt.Tooltip("Cost:Q", format="$,.0f")],
+                tooltip=["Carrier / FFW + POD", "Tier", alt.Tooltip("Cost:Q", format="$,.0f")],
             )
-            .properties(title="Top Carrier + POD Combinations by Tier Cost", height=500)
+            .properties(title="Top Carrier / FFW + POD Combinations by Tier Cost", height=500)
         )
         st.altair_chart(ch2, use_container_width=True)
 
