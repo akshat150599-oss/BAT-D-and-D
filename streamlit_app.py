@@ -186,18 +186,39 @@ NULLABLE_CONTRACT_COLS = [
 
 
 def parse_contracts_csv(contract_file):
+    """
+    Read contract CSV flexibly.
+
+    Important behavior:
+    - Blank / missing numeric tariff fields are allowed.
+    - demurrageStartEventType controls whether a demurrage row is POL or POD:
+        contains "POL" -> POL demurrage
+        contains "POD" -> POD demurrage
+      If neither is present, that row is not used for demurrage pricing.
+    - Detention fields are treated as POD detention when present.
+    """
     cdf = pd.read_csv(contract_file)
 
+    # Ensure optional columns exist so later logic can read safely.
+    optional_cols = [
+        "terminalIdentifier", "demurrageStartEventType", "demurrageTariffCalculationMethod",
+        "validityStartDate", "validityEndDate", "freeDemurrageDays", "firstDemurrageDays",
+        "firstDemurrageRate", "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
+        "detentionStartEventType", "detentionTariffCalculationMethod", "freeDetentionDays",
+        "firstDetentionDays", "firstDetentionRate", "secondDetentionDays", "secondDetentionRate",
+        "thereafterDetentionRate", "currency", "carrierScac", "ffwScac", "portOfLoadingLocode",
+        "combinedFreeDays",
+    ]
+    for col in optional_cols:
+        if col not in cdf.columns:
+            cdf[col] = np.nan
+
     for col in NUMERIC_CONTRACT_COLS:
-        if col in cdf.columns:
-            cdf[col] = pd.to_numeric(cdf[col], errors="coerce")
+        cdf[col] = pd.to_numeric(cdf[col], errors="coerce")
 
     records = cdf.to_dict(orient="records")
     for rec in records:
-        for col in NULLABLE_CONTRACT_COLS:
-            val = rec.get(col)
-            if val is None:
-                continue
+        for col, val in list(rec.items()):
             if isinstance(val, float) and np.isnan(val):
                 rec[col] = None
             elif isinstance(val, str) and val.strip() == "":
@@ -205,6 +226,48 @@ def parse_contracts_csv(contract_file):
 
     return records, cdf
 
+
+def _event_scope(value):
+    """Return POL/POD if the event value explicitly contains those tokens."""
+    text = str(value or "").upper()
+    if "POL" in text:
+        return "POL"
+    if "POD" in text:
+        return "POD"
+    return None
+
+
+def _has_any_number(rec, cols):
+    for col in cols:
+        val = rec.get(col)
+        if val is None:
+            continue
+        try:
+            if not np.isnan(val):
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
+def _has_demurrage_terms(rec):
+    return _has_any_number(
+        rec,
+        [
+            "freeDemurrageDays", "firstDemurrageDays", "firstDemurrageRate",
+            "secondDemurrageDays", "secondDemurrageRate", "thereafterDemurrageRate",
+        ],
+    )
+
+
+def _has_detention_terms(rec):
+    return _has_any_number(
+        rec,
+        [
+            "freeDetentionDays", "firstDetentionDays", "firstDetentionRate",
+            "secondDetentionDays", "secondDetentionRate", "thereafterDetentionRate",
+        ],
+    )
 
 # -----------------------------------------------------------------------------
 # CALCULATION HELPERS
@@ -264,27 +327,138 @@ def calc_tiered_cost_breakdown(chargeable_days, t1_days, t1_rate, t2_days, t2_ra
     return result
 
 
+def _blank_contract_profile():
+    return {
+        "pol_dem": None,
+        "pod_dem": None,
+        "pod_det": None,
+        "source_records": [],
+        "is_estimate": False,
+    }
+
+
+def _put_profile(lookup, key):
+    if key not in lookup:
+        lookup[key] = _blank_contract_profile()
+    return lookup[key]
+
+
 def build_contract_lookup(contracts_list):
+    """
+    Build carrier and FFW lookups.
+
+    Each lookup key stores separate rate records for:
+      - pol_dem: POL demurrage from CGI to CLL
+      - pod_dem: POD demurrage from CDD to CGO
+      - pod_det: POD detention from CGO to CER
+
+    This prevents POD-only demurrage contracts from being accidentally applied
+    to POL demurrage.
+    """
     carrier_lookup = {}
     ffw_lookup = {}
 
-    for c in contracts_list:
+    for c in contracts_list or []:
         terminal = str(c.get("terminalIdentifier", "") or "").strip()
         pol = str(c.get("portOfLoadingLocode", "") or "").strip()
         carrier = c.get("carrierScac")
         ffw = c.get("ffwScac")
 
+        keys = []
         if carrier:
-            carrier_key = f"{terminal}|{str(carrier).strip()}|{pol}"
-            if carrier_key not in carrier_lookup:
-                carrier_lookup[carrier_key] = c
-
+            keys.append((carrier_lookup, f"{terminal}|{str(carrier).strip()}|{pol}"))
         if ffw:
-            ffw_key = f"{terminal}|{str(ffw).strip()}|{pol}"
-            if ffw_key not in ffw_lookup:
-                ffw_lookup[ffw_key] = c
+            keys.append((ffw_lookup, f"{terminal}|{str(ffw).strip()}|{pol}"))
+
+        dem_scope = _event_scope(c.get("demurrageStartEventType"))
+        has_dem = _has_demurrage_terms(c)
+        has_det = _has_detention_terms(c)
+
+        for lookup, key in keys:
+            profile = _put_profile(lookup, key)
+            profile["source_records"].append(c)
+
+            if has_dem and dem_scope == "POL" and profile["pol_dem"] is None:
+                profile["pol_dem"] = c
+            elif has_dem and dem_scope == "POD" and profile["pod_dem"] is None:
+                profile["pod_dem"] = c
+
+            # Detention is POD detention. It does not need demurrageStartEventType.
+            if has_det and profile["pod_det"] is None:
+                profile["pod_det"] = c
 
     return carrier_lookup, ffw_lookup
+
+
+def make_estimate_contract_profile(
+    pol_free_dem,
+    pol_t1_days,
+    pol_t1_rate,
+    pol_t2_days,
+    pol_t2_rate,
+    pol_thereafter_rate,
+    use_combined_pod_free,
+    combined_pod_free_days,
+    pod_free_dem,
+    pod_t1_days,
+    pod_t1_rate,
+    pod_t2_days,
+    pod_t2_rate,
+    pod_thereafter_rate,
+    pod_free_det,
+    det_t1_days,
+    det_t1_rate,
+    det_t2_days,
+    det_t2_rate,
+    det_thereafter_rate,
+):
+    """Create an estimate profile shaped like the contract lookup profile."""
+    pol_dem = {
+        "terminalIdentifier": "ESTIMATE",
+        "portOfLoadingLocode": "ESTIMATE",
+        "demurrageStartEventType": "POL_ESTIMATE",
+        "freeDemurrageDays": pol_free_dem,
+        "firstDemurrageDays": pol_t1_days,
+        "firstDemurrageRate": pol_t1_rate,
+        "secondDemurrageDays": pol_t2_days,
+        "secondDemurrageRate": pol_t2_rate,
+        "thereafterDemurrageRate": pol_thereafter_rate,
+        "combinedFreeDays": None,
+    }
+
+    pod_dem = {
+        "terminalIdentifier": "ESTIMATE",
+        "portOfLoadingLocode": "ESTIMATE",
+        "demurrageStartEventType": "POD_ESTIMATE",
+        "freeDemurrageDays": 0 if use_combined_pod_free else pod_free_dem,
+        "firstDemurrageDays": pod_t1_days,
+        "firstDemurrageRate": pod_t1_rate,
+        "secondDemurrageDays": pod_t2_days,
+        "secondDemurrageRate": pod_t2_rate,
+        "thereafterDemurrageRate": pod_thereafter_rate,
+        "combinedFreeDays": combined_pod_free_days if use_combined_pod_free else None,
+    }
+
+    pod_det = {
+        "terminalIdentifier": "ESTIMATE",
+        "portOfLoadingLocode": "ESTIMATE",
+        "detentionStartEventType": "POD_ESTIMATE",
+        "freeDetentionDays": 0 if use_combined_pod_free else pod_free_det,
+        "firstDetentionDays": det_t1_days,
+        "firstDetentionRate": det_t1_rate,
+        "secondDetentionDays": det_t2_days,
+        "secondDetentionRate": det_t2_rate,
+        "thereafterDetentionRate": det_thereafter_rate,
+        "combinedFreeDays": combined_pod_free_days if use_combined_pod_free else None,
+    }
+
+    return {
+        "pol_dem": pol_dem,
+        "pod_dem": pod_dem,
+        "pod_det": pod_det,
+        "source_records": [pol_dem, pod_dem, pod_det],
+        "is_estimate": True,
+    }
 
 
 def normalize_required_columns(df):
@@ -317,7 +491,27 @@ def normalize_required_columns(df):
 # -----------------------------------------------------------------------------
 # D&D CALCULATION ENGINE
 # -----------------------------------------------------------------------------
-def process_shipments(df, contracts_list):
+def _get_combined_pod_free_days(pod_dem_contract, pod_det_contract):
+    """Combined free days can only apply across POD demurrage + POD detention."""
+    for c in [pod_dem_contract, pod_det_contract]:
+        if c is None:
+            continue
+        val = c.get("combinedFreeDays")
+        if val is not None:
+            return val
+    return None
+
+
+def _contract_label(profile, component_key):
+    c = profile.get(component_key) if profile else None
+    if c is None:
+        return "Not configured"
+    if profile.get("is_estimate"):
+        return "Estimate"
+    return str(c.get("terminalIdentifier", "")) or "Contract"
+
+
+def process_shipments(df, contracts_list=None, estimate_profile=None, use_estimate=False):
     df = normalize_required_columns(df.copy())
 
     event_cols = ["CDD", "CGO", "CER", "VAD", "VDL", "CGI", "CEP", "CLL"]
@@ -332,7 +526,7 @@ def process_shipments(df, contracts_list):
     )
 
     analysis_run_date = pd.Timestamp.now(tz="UTC")
-    carrier_lookup, ffw_lookup = build_contract_lookup(contracts_list)
+    carrier_lookup, ffw_lookup = build_contract_lookup(contracts_list or [])
 
     df["SUBSCRIPTION_STATUS"] = df["SUBSCRIPTION_STATUS"].fillna("").astype(str).str.upper()
     cancelled_count = (df["SUBSCRIPTION_STATUS"] == "CANCELLED").sum()
@@ -352,7 +546,7 @@ def process_shipments(df, contracts_list):
 
     for _, row in df.iterrows():
         key = row["_match_key"]
-        contract = carrier_lookup.get(key) or ffw_lookup.get(key)
+        contract_profile = estimate_profile if use_estimate else (carrier_lookup.get(key) or ffw_lookup.get(key))
 
         cgi = row["CGI"]
         cll = row["CLL"]
@@ -413,7 +607,8 @@ def process_shipments(df, contracts_list):
             "MATCH_KEY": key,
         }
 
-        if contract is None:
+        # In contract mode, no profile means the shipment is a contract gap. In estimate mode, all shipments can be priced.
+        if contract_profile is None:
             reason_parts = []
             if pd.isna(cgi) or pd.isna(cll):
                 reason_parts.append("Cannot evaluate POL demurrage; missing CGI or CLL")
@@ -436,62 +631,63 @@ def process_shipments(df, contracts_list):
             unmatched_results.append(unmatched_record)
             continue
 
-        # Must have CDD to price POD demurrage/detention. POL demurrage can still be priced with CGI/CLL.
-        free_dem = contract.get("freeDemurrageDays")
-        free_det = contract.get("freeDetentionDays")
-        combined_free = contract.get("combinedFreeDays")
+        pol_dem_contract = contract_profile.get("pol_dem")
+        pod_dem_contract = contract_profile.get("pod_dem")
+        pod_det_contract = contract_profile.get("pod_det")
+
+        combined_free = _get_combined_pod_free_days(pod_dem_contract, pod_det_contract)
         has_combined = combined_free is not None
 
-        # POL demurrage is modeled separately using demurrage tariff/free days.
+        # POL demurrage: separate from destination combined free days.
         pol_dem_chargeable = 0.0
         pol_dem_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
-        if pol_dem_total_days is not None:
-            pol_dem_chargeable = max(0, pol_dem_total_days - _safe(free_dem))
+        if pol_dem_contract is not None and pol_dem_total_days is not None:
+            pol_dem_chargeable = max(0, pol_dem_total_days - _safe(pol_dem_contract.get("freeDemurrageDays")))
             pol_dem_breakdown = calc_tiered_cost_breakdown(
                 pol_dem_chargeable,
-                contract.get("firstDemurrageDays"),
-                contract.get("firstDemurrageRate"),
-                contract.get("secondDemurrageDays"),
-                contract.get("secondDemurrageRate"),
-                contract.get("thereafterDemurrageRate"),
+                pol_dem_contract.get("firstDemurrageDays"),
+                pol_dem_contract.get("firstDemurrageRate"),
+                pol_dem_contract.get("secondDemurrageDays"),
+                pol_dem_contract.get("secondDemurrageRate"),
+                pol_dem_contract.get("thereafterDemurrageRate"),
             )
 
-        # POD demurrage.
+        # POD demurrage: can consume combined POD free-day pool first.
         pod_dem_chargeable = 0.0
         remaining_free_for_det = 0.0
         pod_dem_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
-        if pod_dem_total_days is not None:
+        if pod_dem_contract is not None and pod_dem_total_days is not None:
             if has_combined:
                 pod_dem_chargeable = max(0, pod_dem_total_days - combined_free)
                 remaining_free_for_det = max(0, combined_free - pod_dem_total_days)
             else:
-                pod_dem_chargeable = max(0, pod_dem_total_days - _safe(free_dem))
+                pod_dem_chargeable = max(0, pod_dem_total_days - _safe(pod_dem_contract.get("freeDemurrageDays")))
 
             pod_dem_breakdown = calc_tiered_cost_breakdown(
                 pod_dem_chargeable,
-                contract.get("firstDemurrageDays"),
-                contract.get("firstDemurrageRate"),
-                contract.get("secondDemurrageDays"),
-                contract.get("secondDemurrageRate"),
-                contract.get("thereafterDemurrageRate"),
+                pod_dem_contract.get("firstDemurrageDays"),
+                pod_dem_contract.get("firstDemurrageRate"),
+                pod_dem_contract.get("secondDemurrageDays"),
+                pod_dem_contract.get("secondDemurrageRate"),
+                pod_dem_contract.get("thereafterDemurrageRate"),
             )
 
-        # POD detention.
+        # POD detention: receives remaining combined free days, or its own detention free days.
         pod_det_chargeable = 0.0
         pod_det_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
-        if pod_det_total_days is not None:
+        if pod_det_contract is not None and pod_det_total_days is not None:
             if has_combined:
                 pod_det_chargeable = max(0, pod_det_total_days - remaining_free_for_det)
             else:
-                pod_det_chargeable = max(0, pod_det_total_days - _safe(free_det))
+                pod_det_chargeable = max(0, pod_det_total_days - _safe(pod_det_contract.get("freeDetentionDays")))
 
             pod_det_breakdown = calc_tiered_cost_breakdown(
                 pod_det_chargeable,
-                contract.get("firstDetentionDays"),
-                contract.get("firstDetentionRate"),
-                contract.get("secondDetentionDays"),
-                contract.get("secondDetentionRate"),
-                contract.get("thereafterDetentionRate"),
+                pod_det_contract.get("firstDetentionDays"),
+                pod_det_contract.get("firstDetentionRate"),
+                pod_det_contract.get("secondDetentionDays"),
+                pod_det_contract.get("secondDetentionRate"),
+                pod_det_contract.get("thereafterDetentionRate"),
             )
 
         pol_dem_cost = pol_dem_breakdown["total_cost"]
@@ -502,6 +698,7 @@ def process_shipments(df, contracts_list):
         matched_record = base_record.copy()
         matched_record.update(
             {
+                "RATE_SOURCE": "Estimate" if use_estimate else "Contract",
                 "POL_DEM_CHARGEABLE_DAYS": round(pol_dem_chargeable, 2),
                 "POL_DEM_COST": pol_dem_cost,
                 "POD_DEM_CHARGEABLE_DAYS": round(pod_dem_chargeable, 2),
@@ -511,12 +708,17 @@ def process_shipments(df, contracts_list):
                 "DEM_COST": round(pol_dem_cost + pod_dem_cost, 2),
                 "DET_COST": pod_det_cost,
                 "TOTAL_DD_COST": total_cost,
-                "FREE_DEM_DAYS": _safe(free_dem, None),
-                "FREE_DET_DAYS": _safe(free_det, None),
+                "POL_FREE_DEM_DAYS": _safe(pol_dem_contract.get("freeDemurrageDays"), None) if pol_dem_contract else None,
+                "POD_FREE_DEM_DAYS": _safe(pod_dem_contract.get("freeDemurrageDays"), None) if pod_dem_contract else None,
+                "FREE_DEM_DAYS": _safe(pod_dem_contract.get("freeDemurrageDays"), None) if pod_dem_contract else None,
+                "FREE_DET_DAYS": _safe(pod_det_contract.get("freeDetentionDays"), None) if pod_det_contract else None,
                 "COMBINED_FREE_DAYS": combined_free,
-                "CONTRACT_TYPE": "Combined" if has_combined else "Separate",
-                "CONTRACT_IDENTIFIER": str(contract.get("terminalIdentifier", "")),
-                "CONTRACT_POL": str(contract.get("portOfLoadingLocode", "")),
+                "CONTRACT_TYPE": "Estimate" if use_estimate else ("Combined" if has_combined else "Separate"),
+                "POL_DEM_CONTRACT_STATUS": _contract_label(contract_profile, "pol_dem"),
+                "POD_DEM_CONTRACT_STATUS": _contract_label(contract_profile, "pod_dem"),
+                "POD_DET_CONTRACT_STATUS": _contract_label(contract_profile, "pod_det"),
+                "CONTRACT_IDENTIFIER": _contract_label(contract_profile, "pod_dem"),
+                "CONTRACT_POL": str((pod_dem_contract or pod_det_contract or pol_dem_contract or {}).get("portOfLoadingLocode", "")),
                 "POL_DEM_TIER1_DAYS": round(pol_dem_breakdown["tier1_days"], 2),
                 "POL_DEM_TIER1_COST": round(pol_dem_breakdown["tier1_cost"], 2),
                 "POL_DEM_TIER2_DAYS": round(pol_dem_breakdown["tier2_days"], 2),
@@ -743,12 +945,87 @@ def build_unmatched_download_df(data):
 with st.sidebar:
     st.markdown("### 🚢 Demurrage & Detention Analyzer")
     st.markdown("---")
-    uploaded_contract_file = st.file_uploader(
-        "Upload Contract CSV",
-        type=["csv"],
-        help="Upload the D&D contract terms CSV.",
-        key="contract_uploader",
+
+    rate_source = st.radio(
+        "Rate Source",
+        ["Upload Contract CSV", "Estimate Rates"],
+        help="Use uploaded contract terms when available, or estimate D&D exposure from manually entered tariff assumptions.",
     )
+
+    uploaded_contract_file = None
+    estimate_profile = None
+
+    if rate_source == "Upload Contract CSV":
+        uploaded_contract_file = st.file_uploader(
+            "Upload Contract CSV",
+            type=["csv"],
+            help="Upload the D&D contract terms CSV. Demurrage rows are classified using demurrageStartEventType containing POL or POD.",
+            key="contract_uploader",
+        )
+    else:
+        st.markdown("#### Estimate Tariffs")
+        st.caption("All rates are USD/day. POL demurrage is always separate. Combined free days only applies to POD demurrage + POD detention.")
+
+        with st.expander("POL Demurrage Estimate", expanded=True):
+            pol_free_dem = st.number_input("POL free demurrage days", min_value=0.0, value=0.0, step=1.0)
+            pol_t1_days = st.number_input("POL Tier 1 days", min_value=0.0, value=0.0, step=1.0)
+            pol_t1_rate = st.number_input("POL Tier 1 rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+            pol_t2_days = st.number_input("POL Tier 2 days", min_value=0.0, value=0.0, step=1.0)
+            pol_t2_rate = st.number_input("POL Tier 2 rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+            pol_thereafter_rate = st.number_input("POL thereafter rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+
+        with st.expander("POD Free Days", expanded=True):
+            use_combined_pod_free = st.checkbox(
+                "Use combined POD free days for POD demurrage + POD detention",
+                value=False,
+                help="When enabled, POD demurrage consumes the combined free-day pool first; POD detention receives any remaining free days. POL demurrage is not included.",
+            )
+            if use_combined_pod_free:
+                combined_pod_free_days = st.number_input("Combined POD free days", min_value=0.0, value=0.0, step=1.0)
+                pod_free_dem = 0.0
+                pod_free_det = 0.0
+            else:
+                combined_pod_free_days = None
+                pod_free_dem = st.number_input("POD free demurrage days", min_value=0.0, value=0.0, step=1.0)
+                pod_free_det = st.number_input("POD free detention days", min_value=0.0, value=0.0, step=1.0)
+
+        with st.expander("POD Demurrage Estimate", expanded=True):
+            pod_t1_days = st.number_input("POD demurrage Tier 1 days", min_value=0.0, value=0.0, step=1.0)
+            pod_t1_rate = st.number_input("POD demurrage Tier 1 rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+            pod_t2_days = st.number_input("POD demurrage Tier 2 days", min_value=0.0, value=0.0, step=1.0)
+            pod_t2_rate = st.number_input("POD demurrage Tier 2 rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+            pod_thereafter_rate = st.number_input("POD demurrage thereafter rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+
+        with st.expander("POD Detention Estimate", expanded=True):
+            det_t1_days = st.number_input("POD detention Tier 1 days", min_value=0.0, value=0.0, step=1.0)
+            det_t1_rate = st.number_input("POD detention Tier 1 rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+            det_t2_days = st.number_input("POD detention Tier 2 days", min_value=0.0, value=0.0, step=1.0)
+            det_t2_rate = st.number_input("POD detention Tier 2 rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+            det_thereafter_rate = st.number_input("POD detention thereafter rate (USD/day)", min_value=0.0, value=0.0, step=25.0)
+
+        estimate_profile = make_estimate_contract_profile(
+            pol_free_dem,
+            pol_t1_days,
+            pol_t1_rate,
+            pol_t2_days,
+            pol_t2_rate,
+            pol_thereafter_rate,
+            use_combined_pod_free,
+            combined_pod_free_days,
+            pod_free_dem,
+            pod_t1_days,
+            pod_t1_rate,
+            pod_t2_days,
+            pod_t2_rate,
+            pod_thereafter_rate,
+            pod_free_det,
+            det_t1_days,
+            det_t1_rate,
+            det_t2_days,
+            det_t2_rate,
+            det_thereafter_rate,
+        )
+
     uploaded_file = st.file_uploader(
         "Upload Shipment CSV",
         type=["csv"],
@@ -759,7 +1036,7 @@ with st.sidebar:
 
 contracts_list = None
 contracts_df = None
-if uploaded_contract_file is not None:
+if rate_source == "Upload Contract CSV" and uploaded_contract_file is not None:
     try:
         contracts_list, contracts_df = parse_contracts_csv(uploaded_contract_file)
         with st.sidebar:
@@ -767,7 +1044,11 @@ if uploaded_contract_file is not None:
             terminals = sorted(set(c.get("terminalIdentifier", "") for c in contracts_list if c.get("terminalIdentifier")))
             carrier_scacs = sorted(set(c.get("carrierScac", "") for c in contracts_list if c.get("carrierScac")))
             ffw_scacs = sorted(set(c.get("ffwScac", "") for c in contracts_list if c.get("ffwScac")))
+            pol_dem_rows = sum(1 for c in contracts_list if _event_scope(c.get("demurrageStartEventType")) == "POL" and _has_demurrage_terms(c))
+            pod_dem_rows = sum(1 for c in contracts_list if _event_scope(c.get("demurrageStartEventType")) == "POD" and _has_demurrage_terms(c))
+            det_rows = sum(1 for c in contracts_list if _has_detention_terms(c))
             st.markdown(f"**Contract rows:** {len(contracts_list)}")
+            st.markdown(f"**POL dem rows:** {pol_dem_rows:,} | **POD dem rows:** {pod_dem_rows:,} | **Det rows:** {det_rows:,}")
             st.markdown(f"**Terminals:** {', '.join(terminals) if terminals else '—'}")
             carriers_display = carrier_scacs.copy()
             if ffw_scacs:
@@ -780,25 +1061,25 @@ if uploaded_contract_file is not None:
 # -----------------------------------------------------------------------------
 # LANDING PAGE
 # -----------------------------------------------------------------------------
-if uploaded_contract_file is None or uploaded_file is None:
+missing_contract = rate_source == "Upload Contract CSV" and uploaded_contract_file is None
+missing_shipments = uploaded_file is None
+if missing_contract or missing_shipments:
     st.markdown("## 🚢 Demurrage & Detention Analyzer")
     st.markdown("---")
 
-    if uploaded_contract_file is None and uploaded_file is None:
-        st.info("Upload both a **Contract CSV** and a **Shipment CSV** from the sidebar to get started.")
-    elif uploaded_contract_file is None:
-        st.info("Upload a **Contract CSV** from the sidebar to continue.")
-    else:
+    if missing_contract and missing_shipments:
+        st.info("Upload both a **Contract CSV** and a **Shipment CSV** from the sidebar to get started, or switch Rate Source to **Estimate Rates**.")
+    elif missing_contract:
+        st.info("Upload a **Contract CSV** from the sidebar, or switch Rate Source to **Estimate Rates**.")
+    elif missing_shipments:
         st.info("Upload a **Shipment CSV** from the sidebar to continue.")
 
-    st.markdown("**Expected contract CSV columns:**")
+    st.markdown("**Contract CSV behavior:**")
     st.code(
-        "terminalIdentifier, carrierScac, ffwScac, portOfLoadingLocode,\n"
-        "freeDemurrageDays, firstDemurrageDays, firstDemurrageRate,\n"
-        "secondDemurrageDays, secondDemurrageRate, thereafterDemurrageRate,\n"
-        "freeDetentionDays, firstDetentionDays, firstDetentionRate,\n"
-        "secondDetentionDays, secondDetentionRate, thereafterDetentionRate,\n"
-        "combinedFreeDays, currency, validityStartDate, validityEndDate",
+        "demurrageStartEventType contains POL -> used for POL demurrage (CGI to CLL)\n"
+        "demurrageStartEventType contains POD -> used for POD demurrage (CDD to CGO)\n"
+        "detention fields -> used for POD detention (CGO to CER)\n"
+        "missing / blank tariff fields -> treated as 0 / not configured",
         language=None,
     )
 
@@ -812,16 +1093,22 @@ if uploaded_contract_file is None or uploaded_file is None:
     )
     st.stop()
 
-if contracts_list is None:
-    st.error("Contract file could not be parsed. Please check the format and re-upload.")
+if rate_source == "Upload Contract CSV" and contracts_list is None:
+    st.error("Contract file could not be parsed. Please check the format and re-upload, or switch to Estimate Rates.")
     st.stop()
 
 # -----------------------------------------------------------------------------
 # LOAD AND PROCESS
 # -----------------------------------------------------------------------------
-with st.spinner("Processing shipments against uploaded contracts..."):
+process_label = "estimate rates" if rate_source == "Estimate Rates" else "uploaded contracts"
+with st.spinner(f"Processing shipments against {process_label}..."):
     raw_df = pd.read_csv(uploaded_file)
-    rdf, unmatched_df, total_shipments, cancelled_count = process_shipments(raw_df, contracts_list)
+    rdf, unmatched_df, total_shipments, cancelled_count = process_shipments(
+        raw_df,
+        contracts_list=contracts_list,
+        estimate_profile=estimate_profile,
+        use_estimate=(rate_source == "Estimate Rates"),
+    )
 
 if rdf.empty and unmatched_df.empty:
     st.error("No usable shipments found after excluding cancelled shipments.")
@@ -1914,8 +2201,21 @@ with tab_download:
                 "thereafterDetentionRate",
                 "combinedFreeDays",
             ]
-            existing_contract_cols = [c for c in contract_display_cols if c in contracts_df.columns]
-            contracts_df[existing_contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
+            if contracts_df is not None:
+                existing_contract_cols = [c for c in contract_display_cols if c in contracts_df.columns]
+                contracts_df[existing_contract_cols].to_excel(writer, sheet_name="Contracts", index=False)
+            elif estimate_profile is not None:
+                estimate_rows = []
+                for charge_name, key in [
+                    ("POL Demurrage", "pol_dem"),
+                    ("POD Demurrage", "pod_dem"),
+                    ("POD Detention", "pod_det"),
+                ]:
+                    rec = estimate_profile.get(key) or {}
+                    row = {"Charge Type": charge_name}
+                    row.update(rec)
+                    estimate_rows.append(row)
+                pd.DataFrame(estimate_rows).to_excel(writer, sheet_name="Estimate Rates", index=False)
 
         st.download_button(
             label="📥 Download Excel Workbook",
