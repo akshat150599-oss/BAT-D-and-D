@@ -556,6 +556,23 @@ def _contract_label(profile, component_key):
     return str(c.get("terminalIdentifier", "")) or "Contract"
 
 
+def _profile_first_value(profile, field):
+    """Return the first non-blank value for a field from a matched contract profile."""
+    if not profile:
+        return ""
+    for rec in profile.get("source_records", []) or []:
+        val = _clean_scac(rec.get(field, ""))
+        if val:
+            return val
+    for component in ["pol_dem", "pod_dem", "pod_det"]:
+        rec = profile.get(component)
+        if rec:
+            val = _clean_scac(rec.get(field, ""))
+            if val:
+                return val
+    return ""
+
+
 def process_shipments(df, contracts_list=None, estimate_profile=None, use_estimate=False):
     df = normalize_required_columns(df.copy())
 
@@ -594,7 +611,29 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
 
     for _, row in df.iterrows():
         key = row["_match_key"]
-        contract_profile = estimate_profile if use_estimate else (carrier_lookup.get(key) or ffw_lookup.get(key))
+
+        matched_lookup_type = row.get("MATCHED_PARTY_TYPE", "")
+        if use_estimate:
+            contract_profile = estimate_profile
+            matched_lookup_type = "Estimate"
+        else:
+            contract_profile = carrier_lookup.get(key)
+            if contract_profile is not None:
+                matched_lookup_type = "Carrier"
+            else:
+                contract_profile = ffw_lookup.get(key)
+                if contract_profile is not None:
+                    matched_lookup_type = "FFW"
+
+        matched_contract_ffw = _profile_first_value(contract_profile, "ffwScac")
+        carrier_scac_value = _clean_scac(row.get("CARRIER_SCAC", ""))
+        ffw_scac_value = _clean_scac(row.get("FFW_SCAC", ""))
+        if matched_lookup_type == "FFW" and not ffw_scac_value:
+            ffw_scac_value = matched_contract_ffw
+
+        carrier_ffw_scac_value = _clean_scac(row.get("CARRIER_FFW_SCAC", ""))
+        if matched_lookup_type == "FFW" and matched_contract_ffw:
+            carrier_ffw_scac_value = matched_contract_ffw
 
         cgi = row["CGI"]
         cll = row["CLL"]
@@ -631,11 +670,11 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
         base_record = {
             "SHIPMENT_ID": row["SHIPMENT_ID"],
             "CONTAINER_NUMBER": row.get("CONTAINER_NUMBER", ""),
-            "CARRIER_SCAC": row["CARRIER_SCAC"],
+            "CARRIER_SCAC": carrier_scac_value,
             "CARRIER_NAME": row.get("CARRIER_NAME", ""),
-            "FFW_SCAC": row.get("FFW_SCAC", ""),
-            "CARRIER_FFW_SCAC": row.get("CARRIER_FFW_SCAC", ""),
-            "MATCHED_PARTY_TYPE": row.get("MATCHED_PARTY_TYPE", ""),
+            "FFW_SCAC": ffw_scac_value,
+            "CARRIER_FFW_SCAC": carrier_ffw_scac_value,
+            "MATCHED_PARTY_TYPE": matched_lookup_type,
             "POL_LOCODE": row["POL_LOCODE"],
             "POL": row.get("POL", ""),
             "POD_LOCODE": row["POD_LOCODE"],
