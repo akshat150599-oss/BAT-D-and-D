@@ -1243,6 +1243,31 @@ def apply_common_filters(data, require_cost_filter=False):
 fdf = apply_common_filters(rdf, require_cost_filter=True) if not rdf.empty else rdf.copy()
 ufdf = apply_common_filters(unmatched_df, require_cost_filter=False) if not unmatched_df.empty else unmatched_df.copy()
 
+# Pandas groupby drops NA keys by default. Keep blank Carrier/FFW fields visible
+# so Carrier / FFW summaries and missing-contract combinations do not disappear
+# when one of Carrier SCAC or FFW SCAC is intentionally blank.
+def fill_grouping_blanks(data):
+    if data.empty:
+        return data
+    out = data.copy()
+    for col in [
+        "CARRIER_FFW_SCAC",
+        "MATCHED_PARTY_TYPE",
+        "CARRIER_SCAC",
+        "FFW_SCAC",
+        "CARRIER_NAME",
+        "POD_LOCODE",
+        "POL_LOCODE",
+        "MATCH_KEY",
+    ]:
+        if col in out.columns:
+            out[col] = out[col].fillna("").astype(str)
+    return out
+
+fdf = fill_grouping_blanks(fdf)
+ufdf = fill_grouping_blanks(ufdf)
+unmatched_df_display = fill_grouping_blanks(unmatched_df)
+
 # -----------------------------------------------------------------------------
 # TABS
 # -----------------------------------------------------------------------------
@@ -1611,7 +1636,7 @@ with tab_carrier:
         st.warning("No matched shipments available for the selected filters.")
     else:
         carrier_detail = (
-            fdf.groupby(["CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "CARRIER_SCAC", "FFW_SCAC", "CARRIER_NAME"])
+            fdf.groupby(["CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "CARRIER_SCAC", "FFW_SCAC", "CARRIER_NAME"], dropna=False)
             .agg(
                 Ships=("SHIPMENT_ID", "count"),
                 POL_Dem_Ships=("POL_DEM_COST", lambda x: (x > 0).sum()),
@@ -1650,7 +1675,7 @@ with tab_carrier:
         st.markdown("---")
         st.markdown("#### Carrier / FFW × POD Breakdown")
         cp = (
-            fdf.groupby(["CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "POD_LOCODE"])
+            fdf.groupby(["CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "POD_LOCODE"], dropna=False)
             .agg(
                 Ships=("SHIPMENT_ID", "count"),
                 POL_Dem=("POL_DEM_COST", "sum"),
@@ -1919,22 +1944,23 @@ with tab_gaps:
         "These shipments did not match a contract, so fees are not calculated. The app surfaces containers where dwell days are above matched-shipment averages, which may indicate missing contract setup."
     )
 
-    if unmatched_df.empty:
-        st.success("No unmatched shipments found. All non-cancelled shipments matched uploaded contracts.")
+    if ufdf.empty:
+        st.success("No unmatched shipments found for the selected filters. All visible non-cancelled shipments matched uploaded contracts.")
     else:
-        risk_df = unmatched_df[unmatched_df["RISK_FLAG"] == True].copy()
-        active_no_cer = unmatched_df[unmatched_df["DET_ACCUMULATING"] == True].copy()
+        gap_source = fill_grouping_blanks(ufdf)
+        risk_df = gap_source[gap_source["RISK_FLAG"] == True].copy()
+        active_no_cer = gap_source[gap_source["DET_ACCUMULATING"] == True].copy()
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Unmatched Shipments", f"{len(unmatched_df):,}")
+        c1.metric("Unmatched Shipments", f"{len(gap_source):,}")
         c2.metric("Risk Containers", f"{len(risk_df):,}", "above avg dwell")
-        c3.metric("Missing Contract Keys", f"{unmatched_df['MATCH_KEY'].nunique():,}")
+        c3.metric("Missing Contract Keys", f"{gap_source['MATCH_KEY'].nunique():,}")
         c4.metric("Active, No CER", f"{len(active_no_cer):,}", "detention may grow")
 
         st.markdown("---")
         st.markdown("#### Missing Contract Combinations")
         combo = (
-            unmatched_df.groupby(["POD_LOCODE", "CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "CARRIER_SCAC", "FFW_SCAC", "POL_LOCODE", "MATCH_KEY"])
+            gap_source.groupby(["POD_LOCODE", "CARRIER_FFW_SCAC", "MATCHED_PARTY_TYPE", "CARRIER_SCAC", "FFW_SCAC", "POL_LOCODE", "MATCH_KEY"], dropna=False)
             .agg(
                 Shipments=("SHIPMENT_ID", "count"),
                 Containers=("CONTAINER_NUMBER", lambda x: x.nunique()),
@@ -2006,7 +2032,7 @@ with tab_gaps:
             "MATCH_KEY",
             "DATA_LIMITATION",
         ]
-        gap_show = unmatched_df[[c for c in gap_cols if c in unmatched_df.columns]].sort_values(
+        gap_show = gap_source[[c for c in gap_cols if c in gap_source.columns]].sort_values(
             ["RISK_SCORE", "POD_DET_TOTAL_DAYS", "POD_DEM_TOTAL_DAYS", "POL_DEM_TOTAL_DAYS"],
             ascending=False,
         ).copy()
