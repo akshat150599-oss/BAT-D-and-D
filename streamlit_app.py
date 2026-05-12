@@ -628,12 +628,19 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
         matched_contract_ffw = _profile_first_value(contract_profile, "ffwScac")
         carrier_scac_value = _clean_scac(row.get("CARRIER_SCAC", ""))
         ffw_scac_value = _clean_scac(row.get("FFW_SCAC", ""))
-        if matched_lookup_type == "FFW" and not ffw_scac_value:
-            ffw_scac_value = matched_contract_ffw
-
         carrier_ffw_scac_value = _clean_scac(row.get("CARRIER_FFW_SCAC", ""))
-        if matched_lookup_type == "FFW" and matched_contract_ffw:
-            carrier_ffw_scac_value = matched_contract_ffw
+
+        if matched_lookup_type == "FFW":
+            # If the row matched through contract ffwScac, keep that value in FFW_SCAC only.
+            # Some shipment exports place the FFW code in CARRIER_SCAC; do not repeat it as Carrier SCAC.
+            if not ffw_scac_value:
+                ffw_scac_value = matched_contract_ffw or carrier_ffw_scac_value
+            if matched_contract_ffw:
+                carrier_ffw_scac_value = matched_contract_ffw
+            if carrier_scac_value and carrier_scac_value == ffw_scac_value:
+                carrier_scac_value = ""
+            elif matched_contract_ffw and carrier_scac_value == matched_contract_ffw:
+                carrier_scac_value = ""
 
         cgi = row["CGI"]
         cll = row["CLL"]
