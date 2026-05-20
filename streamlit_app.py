@@ -199,7 +199,6 @@ def parse_contracts_csv(contract_file):
     """
     cdf = pd.read_csv(contract_file)
 
-    # Ensure optional columns exist so later logic can read safely.
     optional_cols = [
         "terminalIdentifier", "demurrageStartEventType", "demurrageTariffCalculationMethod",
         "validityStartDate", "validityEndDate", "freeDemurrageDays", "firstDemurrageDays",
@@ -228,7 +227,6 @@ def parse_contracts_csv(contract_file):
 
 
 def _event_scope(value):
-    """Return POL/POD if the event value explicitly contains those tokens."""
     text = str(value or "").upper()
     if "POL" in text:
         return "POL"
@@ -290,7 +288,6 @@ def _days_between(end_ts, start_ts):
 
 
 def calc_tiered_cost_breakdown(chargeable_days, t1_days, t1_rate, t2_days, t2_rate, thereafter_rate):
-    """Return detailed tier day/cost breakdown for a 3-tier tariff."""
     result = {
         "tier1_days": 0.0,
         "tier1_cost": 0.0,
@@ -344,17 +341,6 @@ def _put_profile(lookup, key):
 
 
 def build_contract_lookup(contracts_list):
-    """
-    Build carrier and FFW lookups.
-
-    Each lookup key stores separate rate records for:
-      - pol_dem: POL demurrage from CGI to CLL
-      - pod_dem: POD demurrage from CDD to CGO
-      - pod_det: POD detention from CGO to CER
-
-    This prevents POD-only demurrage contracts from being accidentally applied
-    to POL demurrage.
-    """
     carrier_lookup = {}
     ffw_lookup = {}
 
@@ -383,7 +369,6 @@ def build_contract_lookup(contracts_list):
             elif has_dem and dem_scope == "POD" and profile["pod_dem"] is None:
                 profile["pod_dem"] = c
 
-            # Detention is POD detention. It does not need demurrageStartEventType.
             if has_det and profile["pod_det"] is None:
                 profile["pod_det"] = c
 
@@ -412,7 +397,6 @@ def make_estimate_contract_profile(
     det_t2_rate,
     det_thereafter_rate,
 ):
-    """Create an estimate profile shaped like the contract lookup profile."""
     pol_dem = {
         "terminalIdentifier": "ESTIMATE",
         "portOfLoadingLocode": "ESTIMATE",
@@ -480,7 +464,6 @@ def _clean_scac(val):
 
 
 def _shipment_match_identity(row):
-    """Prefer shipment carrier SCAC; if blank, fall back to shipment freight-forwarder SCAC."""
     carrier = _clean_scac(row.get("CARRIER_SCAC", ""))
     ffw = _clean_scac(row.get("FFW_SCAC", ""))
     if carrier:
@@ -491,7 +474,6 @@ def _shipment_match_identity(row):
 
 
 def normalize_required_columns(df):
-    # Normalize shipment-side freight forwarder into FFW_SCAC if the export uses a different name.
     ffw_aliases = [
         "FFW_SCAC",
         "FFW",
@@ -537,7 +519,6 @@ def normalize_required_columns(df):
 # D&D CALCULATION ENGINE
 # -----------------------------------------------------------------------------
 def _get_combined_pod_free_days(pod_dem_contract, pod_det_contract):
-    """Combined free days can only apply across POD demurrage + POD detention."""
     for c in [pod_dem_contract, pod_det_contract]:
         if c is None:
             continue
@@ -557,7 +538,6 @@ def _contract_label(profile, component_key):
 
 
 def _profile_first_value(profile, field):
-    """Return the first non-blank value for a field from a matched contract profile."""
     if not profile:
         return ""
     for rec in profile.get("source_records", []) or []:
@@ -631,8 +611,6 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
         carrier_ffw_scac_value = _clean_scac(row.get("CARRIER_FFW_SCAC", ""))
 
         if matched_lookup_type == "FFW":
-            # If the row matched through contract ffwScac, keep that value in FFW_SCAC only.
-            # Some shipment exports place the FFW code in CARRIER_SCAC; do not repeat it as Carrier SCAC.
             if not ffw_scac_value:
                 ffw_scac_value = matched_contract_ffw or carrier_ffw_scac_value
             if matched_contract_ffw:
@@ -704,7 +682,6 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
             "MATCH_KEY": key,
         }
 
-        # In contract mode, no profile means the shipment is a contract gap. In estimate mode, all shipments can be priced.
         if contract_profile is None:
             reason_parts = []
             if pd.isna(cgi) or pd.isna(cll):
@@ -735,7 +712,6 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
         combined_free = _get_combined_pod_free_days(pod_dem_contract, pod_det_contract)
         has_combined = combined_free is not None
 
-        # POL demurrage: separate from destination combined free days.
         pol_dem_chargeable = 0.0
         pol_dem_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
         if pol_dem_contract is not None and pol_dem_total_days is not None:
@@ -749,7 +725,6 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
                 pol_dem_contract.get("thereafterDemurrageRate"),
             )
 
-        # POD demurrage: can consume combined POD free-day pool first.
         pod_dem_chargeable = 0.0
         remaining_free_for_det = 0.0
         pod_dem_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
@@ -769,7 +744,6 @@ def process_shipments(df, contracts_list=None, estimate_profile=None, use_estima
                 pod_dem_contract.get("thereafterDemurrageRate"),
             )
 
-        # POD detention: receives remaining combined free days, or its own detention free days.
         pod_det_chargeable = 0.0
         pod_det_breakdown = calc_tiered_cost_breakdown(0, 0, 0, 0, 0, 0)
         if pod_det_contract is not None and pod_det_total_days is not None:
@@ -850,7 +824,6 @@ def enrich_unmatched_risk(unmatched_df, matched_df):
     if unmatched_df.empty:
         return unmatched_df
 
-    # Use matched shipments as the benchmark. Prefer non-zero dwell days so the threshold is operationally meaningful.
     def positive_mean(df, col):
         if df.empty or col not in df.columns:
             return np.nan
@@ -862,7 +835,6 @@ def enrich_unmatched_risk(unmatched_df, matched_df):
     global_avg_pod_dem = positive_mean(matched_df, "POD_DEM_TOTAL_DAYS")
     global_avg_pod_det = positive_mean(matched_df, "POD_DET_TOTAL_DAYS")
 
-    # Fallback thresholds to prevent every small dwell from being flagged when matched data is sparse.
     if np.isnan(global_avg_pol_dem):
         global_avg_pol_dem = 3.0
     if np.isnan(global_avg_pod_dem):
@@ -928,9 +900,6 @@ def build_download_df(data):
         "CONTAINER_NUMBER": "Container",
         "CARRIER_SCAC": "Carrier SCAC",
         "CARRIER_NAME": "Carrier Name",
-        "FFW_SCAC": "Freight Forwarder SCAC",
-        "CARRIER_FFW_SCAC": "Carrier / FFW SCAC",
-        "MATCHED_PARTY_TYPE": "Matched Party Type",
         "FFW_SCAC": "Freight Forwarder SCAC",
         "CARRIER_FFW_SCAC": "Carrier / FFW SCAC",
         "MATCHED_PARTY_TYPE": "Matched Party Type",
@@ -1223,7 +1192,6 @@ if rdf.empty and unmatched_df.empty:
 # -----------------------------------------------------------------------------
 # SIDEBAR FILTERS
 # -----------------------------------------------------------------------------
-# Ensure the trend/date anchor exists for older processed rows.
 for _df in [rdf, unmatched_df]:
     if not _df.empty:
         if "DD_ANCHOR_DATE" not in _df.columns:
@@ -1289,9 +1257,6 @@ def apply_common_filters(data, require_cost_filter=False):
 fdf = apply_common_filters(rdf, require_cost_filter=True) if not rdf.empty else rdf.copy()
 ufdf = apply_common_filters(unmatched_df, require_cost_filter=False) if not unmatched_df.empty else unmatched_df.copy()
 
-# Pandas groupby drops NA keys by default. Keep blank Carrier/FFW fields visible
-# so Carrier / FFW summaries and missing-contract combinations do not disappear
-# when one of Carrier SCAC or FFW SCAC is intentionally blank.
 def fill_grouping_blanks(data):
     if data.empty:
         return data
@@ -1936,6 +1901,45 @@ with tab_ships:
             height=600,
         )
 
+        # Download full priced shipment list, not just visible top N.
+        priced_download_df = fdf[fdf["TOTAL_DD_COST"] > 0].copy()
+
+        if priced_download_df.empty:
+            st.info("There’s nothing to download because no priced shipments have D&D cost greater than $0.")
+        else:
+            download_df = priced_download_df[
+                [c for c in display_cols if c in priced_download_df.columns]
+            ].copy()
+
+            for dc in ["CGI", "CLL", "CDD", "CGO", "CER"]:
+                if dc in download_df.columns:
+                    download_df[dc] = (
+                        pd.to_datetime(download_df[dc], errors="coerce")
+                        .dt.strftime("%Y-%m-%d")
+                        .fillna("—")
+                    )
+
+            download_df["DET_STATUS"] = download_df.apply(
+                lambda r: "⚠️ Active → Today"
+                if r.get("DET_ACCUMULATING", False)
+                else ("📅 Completed → Modified" if r.get("DET_END_SOURCE") == "MODIFIED_DATE" else "✓ CER"),
+                axis=1,
+            )
+
+            download_df = download_df.drop(
+                columns=["DET_ACCUMULATING", "DET_END_SOURCE"],
+                errors="ignore",
+            )
+
+            csv_bytes = download_df.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                label="📥 Download Full Priced Shipments CSV",
+                data=csv_bytes,
+                file_name=f"Demurrage_Detention_Priced_Shipments_{datetime.now().strftime('%Y-%m-%d')}.csv",
+                mime="text/csv",
+            )
+
         st.markdown("---")
         col1, col2, col3 = st.columns(3)
 
@@ -2324,7 +2328,7 @@ with tab_download:
             pd.DataFrame(summary_data).to_excel(writer, sheet_name="Summary", index=False)
 
             contract_display_cols = [
-                "terminalIdentifier",
+                "terminalIdentifier", 
                 "carrierScac",
                 "ffwScac",
                 "portOfLoadingLocode",
